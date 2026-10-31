@@ -2,6 +2,7 @@
 	import type { Browse } from '#lib/protocol/client.ts';
 	import * as Table from '#lib/components/ui/table/index.ts';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.ts';
+	import { formatBytes } from '#lib/format.ts';
 
 	type Props = { columns: string[]; rows?: Browse };
 
@@ -23,11 +24,18 @@
 			{#each rows.rows as row, index (index)}
 				<Table.Row>
 					{#each row as value, column (column)}
-						<Table.Cell class="max-w-xs truncate font-mono text-xs" title={value ?? undefined}>
+						<Table.Cell
+							class="max-w-xs truncate font-mono text-xs"
+							title={value?.kind === 'text' ? value.text : undefined}
+						>
 							{#if value === null}
 								<span class="text-muted-foreground">—</span>
+							{:else if value.kind === 'binary'}
+								<span class="text-muted-foreground"
+									>Binary &bull; {formatBytes(value.bytes)}</span
+								>
 							{:else}
-								{value}
+								{value.text}
 							{/if}
 						</Table.Cell>
 					{/each}

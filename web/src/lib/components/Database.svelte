@@ -68,9 +68,7 @@
 				</Alert>
 			{:else}
 				<RowsTable
-					columns={first.columns
-						.filter((column) => column.typeName !== 'bytea')
-						.map((column) => column.name)}
+					columns={first.columns.map((column) => column.name)}
 					rows={rows.type === 'loaded' ? rows.rows : undefined}
 				/>
 			{/if}

@@ -1,4 +1,5 @@
 pub mod browse;
+pub mod codec;
 pub mod config;
 pub mod connection;
 pub mod database;

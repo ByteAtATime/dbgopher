@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Capability } from './bindings/Capability';
+import type { Cell } from './bindings/Cell';
 import type { Column } from './bindings/Column';
 import type { ForeignKey } from './bindings/ForeignKey';
 import type { Request } from './bindings/Request';
@@ -9,7 +10,7 @@ import { createChannel } from './channel';
 
 export type Hello = Extract<ConnectorResponse, { type: 'hello' }>;
 export type Overview = Extract<ConnectorResponse, { type: 'overview' }>;
-export type Browse = Extract<ConnectorResponse, { type: 'browse' }>;
+export type Browse = z.output<typeof browseSchema>;
 export type BrowseOptions = Omit<Extract<Request, { type: 'browse' }>, 'type'>;
 
 export type RelayErrorReason =
@@ -95,11 +96,16 @@ const overviewSchema = z.object({
 	tables: z.array(tableSchema)
 }) satisfies z.ZodType<Overview>;
 
+const valueSchema = z.union([
+	z.string().transform((text) => ({ kind: 'text' as const, text })),
+	z.object({ bytes: z.number() }).transform(({ bytes }) => ({ kind: 'binary' as const, bytes }))
+]) satisfies z.ZodType<unknown, Cell>;
+
 const browseSchema = z.object({
 	type: z.literal('browse'),
 	columns: z.array(columnSchema),
-	rows: z.array(z.array(z.string().nullable()))
-}) satisfies z.ZodType<Browse>;
+	rows: z.array(z.array(valueSchema.nullable()))
+}) satisfies z.ZodType<unknown, Extract<ConnectorResponse, { type: 'browse' }>>;
 
 const errorSchema = z.object({
 	type: z.literal('error'),

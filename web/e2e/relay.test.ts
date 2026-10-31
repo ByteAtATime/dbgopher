@@ -246,7 +246,8 @@ describe('relay', () => {
 					totalBytes: expect.any(Number),
 					columns: [
 						column('id', 'integer', 23),
-						column('Payload', 'jsonb', 3802, { nullable: true })
+						column('Payload', 'jsonb', 3802, { nullable: true }),
+						column('Attachment', 'bytea', 17, { nullable: true })
 					],
 					primaryKey: ['id'],
 					foreignKeys: []
@@ -409,12 +410,13 @@ describe('relay', () => {
 		});
 		const columns = [
 			column('id', 'integer', 23),
-			column('Payload', 'jsonb', 3802, { nullable: true })
+			column('Payload', 'jsonb', 3802, { nullable: true }),
+			column('Attachment', 'bytea', 17, { nullable: true })
 		];
 		expect(await open()).toEqual({
 			type: 'browse',
 			columns,
-			rows: [['1', '{"type": "signup"}']]
+			rows: [['1', '{"type": "signup"}', { bytes: 782 }]]
 		});
 		const { open: openEmpty } = await send({
 			type: 'browse',
@@ -538,9 +540,23 @@ describe('browser client', () => {
 			['note', 'text'],
 			['created_at', 'timestamp with time zone']
 		]);
+		const text = (text: unknown) => ({ kind: 'text', text });
 		expect(rows).toEqual([
-			['2', '1', null, expect.any(String)],
-			['3', '2', null, expect.any(String)]
+			[text('2'), text('1'), null, text(expect.any(String))],
+			[text('3'), text('2'), null, text(expect.any(String))]
+		]);
+	});
+
+	it('browses binary columns as their length', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const client = await browserClient();
+		const { rows } = await client.browse({ schema: 'audit', table: 'Event Log' });
+		expect(rows).toEqual([
+			[
+				{ kind: 'text', text: '1' },
+				{ kind: 'text', text: '{"type": "signup"}' },
+				{ kind: 'binary', bytes: 782 }
+			]
 		]);
 	});
 

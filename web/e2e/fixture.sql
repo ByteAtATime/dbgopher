@@ -41,7 +41,8 @@ CREATE SCHEMA audit;
 
 CREATE TABLE audit."Event Log" (
 	id integer PRIMARY KEY,
-	"Payload" jsonb
+	"Payload" jsonb,
+	"Attachment" bytea
 );
 
 INSERT INTO customers (email) VALUES ('ada@example.com'), ('alan@example.com'), ('grace@example.com');
@@ -50,7 +51,7 @@ INSERT INTO order_items VALUES (1, 1, 1), (1, 2, 2.5), (2, 1, 1), (3, 1, 4), (4,
 INSERT INTO shipments (order_id, position) VALUES (1, 1), (3, 1);
 INSERT INTO events VALUES (1, '2026-03-01'), (2, '2026-10-30');
 INSERT INTO readings SELECT id, repeat('x', 100) FROM generate_series(1, 200000) id;
-INSERT INTO audit."Event Log" VALUES (1, '{"type": "signup"}');
+INSERT INTO audit."Event Log" VALUES (1, '{"type": "signup"}', decode(repeat('ab', 782), 'hex'));
 
 CREATE VIEW recent_orders AS SELECT id, customer_id FROM orders WHERE id > 2;
 

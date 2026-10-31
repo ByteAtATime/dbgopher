@@ -3,6 +3,7 @@ use tokio_postgres::Transaction;
 use tokio_postgres::types::ToSql;
 use ts_rs::TS;
 
+use crate::codec::{Cell, Codec};
 use crate::overview::{Column, quote_identifier};
 
 #[derive(Debug, Serialize, TS)]
@@ -10,7 +11,7 @@ use crate::overview::{Column, quote_identifier};
 #[ts(export)]
 pub struct Rows {
     pub columns: Vec<Column>,
-    pub rows: Vec<Vec<Option<String>>>,
+    pub rows: Vec<Vec<Option<Cell>>>,
 }
 
 pub const DEFAULT_LIMIT: u32 = 500;
@@ -34,24 +35,45 @@ pub async fn load(
     limit: u32,
     offset: u32,
 ) -> Result<Rows, tokio_postgres::Error> {
+    let names: [&(dyn ToSql + Sync); 2] = [&schema, &table];
+    let columns: Vec<Column> = transaction
+        .query(COLUMNS, &names)
+        .await?
+        .iter()
+        .map(Column::from)
+        .collect();
+    let codecs: Vec<Codec> = columns
+        .iter()
+        .map(|column| Codec::for_type(column.type_oid))
+        .collect();
+    let projection = columns
+        .iter()
+        .zip(&codecs)
+        .map(|(column, codec)| codec.select(&column.name))
+        .collect::<Vec<_>>()
+        .join(", ");
     let query = format!(
         "SELECT array(
             SELECT value FROM json_each_text(row_to_json(t)) WITH ORDINALITY ORDER BY ordinality
         ) AS values
-        FROM {}.{} t
-        LIMIT $1 OFFSET $2",
+        FROM (SELECT {projection} FROM {}.{} LIMIT $1 OFFSET $2) t",
         quote_identifier(schema),
         quote_identifier(table)
     );
     let (limit, offset) = (i64::from(limit), i64::from(offset));
-    let names: [&(dyn ToSql + Sync); 2] = [&schema, &table];
     let page: [&(dyn ToSql + Sync); 2] = [&limit, &offset];
-    let (columns, rows) = tokio::try_join!(
-        transaction.query(COLUMNS, &names),
-        transaction.query(&query, &page),
-    )?;
+    let rows = transaction.query(&query, &page).await?;
     Ok(Rows {
-        columns: columns.iter().map(Column::from).collect(),
-        rows: rows.iter().map(|row| row.get("values")).collect(),
+        columns,
+        rows: rows
+            .iter()
+            .map(|row| {
+                row.get::<_, Vec<Option<String>>>("values")
+                    .into_iter()
+                    .zip(&codecs)
+                    .map(|(value, codec)| value.map(|value| codec.decode(value)))
+                    .collect()
+            })
+            .collect(),
     })
 }
