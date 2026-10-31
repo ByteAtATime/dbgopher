@@ -31,9 +31,7 @@
 							{#if value === null}
 								<span class="text-muted-foreground">—</span>
 							{:else if value.kind === 'binary'}
-								<span class="text-muted-foreground"
-									>Binary &bull; {formatBytes(value.bytes)}</span
-								>
+								<span class="text-muted-foreground">Binary &bull; {formatBytes(value.bytes)}</span>
 							{:else}
 								{value.text}
 							{/if}
