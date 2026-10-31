@@ -25,7 +25,7 @@
 	);
 
 	const data = $derived(
-		Array.from({ length: rows?.rows.length ?? SKELETON_ROWS }, (_, index) => ({ id: index }))
+		Array.from({ length: rows?.rows.length ?? SKELETON_ROWS }, (_, index) => ({ id: index + 1 }))
 	);
 </script>
 
