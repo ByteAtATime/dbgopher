@@ -1,52 +1,70 @@
 <script lang="ts">
+	import { Grid, Willow, type IColumnConfig } from '@svar-ui/svelte-grid';
 	import type { Browse } from '#lib/protocol/client.ts';
-	import * as Table from '#lib/components/ui/table/index.ts';
-	import { Skeleton } from '#lib/components/ui/skeleton/index.ts';
-	import { formatBytes } from '#lib/format.ts';
+	import RowsTableCell, { setRows } from './RowsTableCell.svelte';
 
 	type Props = { columns: string[]; rows?: Browse };
 
+	const COLUMN_WIDTH = 250;
+	const SKELETON_ROWS = 8;
+
 	let { columns, rows }: Props = $props();
 
+	setRows(() => rows);
+
 	const headers = $derived(rows?.columns.map((column) => column.name) ?? columns);
+
+	const gridColumns = $derived<IColumnConfig[]>(
+		headers.map((header, index) => ({
+			id: index,
+			header,
+			width: COLUMN_WIDTH,
+			resize: true,
+			cell: RowsTableCell
+		}))
+	);
+
+	const data = $derived(
+		Array.from({ length: rows?.rows.length ?? SKELETON_ROWS }, (_, index) => ({ id: index }))
+	);
 </script>
 
-<Table.Root>
-	<Table.Header>
-		<Table.Row>
-			{#each headers as header, index (index)}
-				<Table.Head class="text-xs text-muted-foreground">{header}</Table.Head>
-			{/each}
-		</Table.Row>
-	</Table.Header>
-	<Table.Body>
-		{#if rows}
-			{#each rows.rows as row, index (index)}
-				<Table.Row>
-					{#each row as value, column (column)}
-						<Table.Cell
-							class="max-w-xs truncate font-mono text-xs"
-							title={value?.kind === 'text' ? value.text : undefined}
-						>
-							{#if value === null}
-								<span class="text-muted-foreground">—</span>
-							{:else if value.kind === 'binary'}
-								<span class="text-muted-foreground">Binary &bull; {formatBytes(value.bytes)}</span>
-							{:else}
-								{value.text}
-							{/if}
-						</Table.Cell>
-					{/each}
-				</Table.Row>
-			{/each}
-		{:else}
-			{#each { length: 8 }, index (index)}
-				<Table.Row aria-hidden="true">
-					{#each { length: headers.length }, column (column)}
-						<Table.Cell><Skeleton class="h-5 w-20" /></Table.Cell>
-					{/each}
-				</Table.Row>
-			{/each}
-		{/if}
-	</Table.Body>
-</Table.Root>
+<div class="rows-grid h-full">
+	<Willow fonts={false}>
+		<Grid
+			{data}
+			columns={gridColumns}
+			select={false}
+			sizes={{ rowHeight: 33, headerHeight: 40, columnWidth: COLUMN_WIDTH }}
+		/>
+	</Willow>
+</div>
+
+<style>
+	.rows-grid :global(.wx-willow-theme) {
+		--wx-font-family: var(--font-sans);
+		--wx-font-size: var(--text-xs);
+		--wx-line-height: 16px;
+		--wx-color-font: var(--foreground);
+		--wx-color-font-alt: var(--muted-foreground);
+		--wx-color-primary: var(--primary);
+		--wx-background: var(--background);
+		--wx-background-alt: var(--muted);
+		--wx-background-hover: var(--accent);
+		--wx-border-color: var(--border);
+		--wx-border: 1px solid var(--border);
+		--wx-table-border: 1px solid var(--border);
+		--wx-table-header-background: var(--background);
+		--wx-header-font-weight: 500;
+		--wx-table-select-background: var(--accent);
+		--wx-table-fixed-column-border: 1px solid var(--border);
+	}
+
+	.rows-grid :global(.wx-header .wx-cell) {
+		color: var(--muted-foreground);
+	}
+
+	.rows-grid :global(.wx-body .wx-cell) {
+		font-family: var(--font-mono);
+	}
+</style>

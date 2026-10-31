@@ -107,9 +107,7 @@
 					</Alert>
 				</div>
 			{:else}
-				<div
-					class="min-h-0 flex-1 overflow-auto **:data-[slot=table-container]:overflow-visible [&_thead]:sticky [&_thead]:top-0 [&_thead]:bg-background"
-				>
+				<div class="min-h-0 flex-1">
 					<RowsTable {columns} rows={rows.type === 'loaded' ? rows.rows : undefined} />
 				</div>
 			{/if}

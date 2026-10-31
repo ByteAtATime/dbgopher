@@ -63,6 +63,9 @@ importers:
       '@storybook/sveltekit':
         specifier: ^10.6.5
         version: 10.6.5(@sveltejs/vite-plugin-svelte@7.3.1(svelte@5.57.3(@typescript-eslint/types@8.72.1))(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))(storybook@10.6.5(prettier@3.9.10)(react@19.3.1))(svelte@5.57.3(@typescript-eslint/types@8.72.1))(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
+      '@svar-ui/svelte-grid':
+        specifier: ^2.7.5
+        version: 2.7.5
       '@sveltejs/adapter-node':
         specifier: ^6.0.0
         version: 6.0.0(@sveltejs/kit@3.1.0(@sveltejs/vite-plugin-svelte@7.3.1(svelte@5.57.3(@typescript-eslint/types@8.72.1))(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))(svelte@5.57.3(@typescript-eslint/types@8.72.1))(typescript@6.0.3)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
@@ -1500,6 +1503,45 @@ packages:
       storybook: ^10.6.5
       svelte: ^5.0.0
       vite: ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0
+
+  '@svar-ui/core-locales@2.6.1':
+    resolution: {integrity: sha512-18xu7qn8Bxwi2EHguVV3Xya5kS+A+6Gnuo2wl55dofp9y948iZ5z7HIRh1+Mj1BgzbdVt6+B04JOCDMLJXyjtg==}
+
+  '@svar-ui/grid-data-provider@2.7.5':
+    resolution: {integrity: sha512-cYf6Vi+cAVhZBkVeKFFIDXmMaLKqyzKPzup3H2v13kIB7R2B3yq/UmfkewFx58VKxzObnnt3T6VFx7JTB6pUDQ==}
+
+  '@svar-ui/grid-locales@2.7.5':
+    resolution: {integrity: sha512-iqV49UxVOSwN+Va7VRYY6wiYrT7C1zwGPWSKdthkydXUcHbxxwkzwvgPUxcBgooN0tUANS03TMfqCX7tSMuD6w==}
+
+  '@svar-ui/grid-store@2.7.5':
+    resolution: {integrity: sha512-0tjK8P6WZcSPPnczoG/uc4nF6qLjf0y/fKyvo/KhsBD4CUmZUAZNpdsX0a78LVKTGiEsxwqhf0jk3GrQJxPj5Q==}
+
+  '@svar-ui/lib-data-provider@1.7.4':
+    resolution: {integrity: sha512-aDNMqd4kKK7aGTkF6F2zrjchaE3cjVKAYNCzm2fsLXKiGLn6gpxUAXGgsEuPrgop5wvOfJVJGr7cO/3dEsdHpA==}
+
+  '@svar-ui/lib-dom@0.12.1':
+    resolution: {integrity: sha512-srvDleQqR6stBBDijCgzDHMFTTffI6sv3XCpNPKmurrnE83L1MDNqezqg6j3+0dUVPd4AAEGOez2DvK6byblTQ==}
+
+  '@svar-ui/lib-dom@0.14.0':
+    resolution: {integrity: sha512-9uao5ebcQmuW0RoMu1LCesPsZ7i6G3xIvYAQzX/aeg662Yy/ETsNVy1pXoSa2q5v6ccAMjVxFrFCYReK7fzaJQ==}
+
+  '@svar-ui/lib-state@1.10.1':
+    resolution: {integrity: sha512-Gdxm1F0dv6jhy5SM473spM9TX8qH8ZycTRggawHpJikdSME3FN7v6b+ER202PjGB4VnWWlqFRHZqkVWsSyZ8Wg==}
+
+  '@svar-ui/lib-svelte@0.5.2':
+    resolution: {integrity: sha512-i+hHMT3zctaGbRpyMDREt9im7YfLpvGwFYvH1ntEp/kYAwUrR/sxMJlEEKIid+Yg2EeMUstGxmYQbkWoMpPG7A==}
+
+  '@svar-ui/svelte-core@2.6.1':
+    resolution: {integrity: sha512-PDITkUE/D5RfGTYezrzK2U5/uNSW1n/aPJ59VmMPCdrrfKpVvrcPIZrg+O6zlnQHxBP0sMh18AN7iuSR+Y7Sxw==}
+
+  '@svar-ui/svelte-grid@2.7.5':
+    resolution: {integrity: sha512-K7+tGUxR8tclMua9EbSrftRFBewFT5uIxYShADEmNbjPnWIlvXulJD9JdHzqDNb7eDRgtfazLmlqRTN9MLc4yA==}
+
+  '@svar-ui/svelte-menu@2.6.1':
+    resolution: {integrity: sha512-F6CfgKATDZR5Qo0Xs3kLJkiLeNU9CV10NV96IZgKF4Gdz/g1QaaY20KXyyAXYDwgm0RVFzMMy2bBzWLxyuZ9Kg==}
+
+  '@svar-ui/svelte-toolbar@2.6.1':
+    resolution: {integrity: sha512-uIaOMBHEZlvu2MX+lPSg0Zl4L/x37b9YcR2A5/uvLF+wO+s7h6lRbX+GHkJAidvsY+H0EcpjltBKo9cm53tgGQ==}
 
   '@sveltejs/acorn-typescript@1.0.13':
     resolution: {integrity: sha512-wgKggnhZVL9Bfx1OaKKTrYY9BFRk6C8UAkQNUcIv1+llzYrIqy+RZm5HPKzn0NpEBvTVhTqB4kQyllZywsRBRQ==}
@@ -4440,6 +4482,61 @@ snapshots:
       vite: 8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)
     transitivePeerDependencies:
       - '@sveltejs/vite-plugin-svelte'
+
+  '@svar-ui/core-locales@2.6.1': {}
+
+  '@svar-ui/grid-data-provider@2.7.5':
+    dependencies:
+      '@svar-ui/lib-data-provider': 1.7.4
+
+  '@svar-ui/grid-locales@2.7.5': {}
+
+  '@svar-ui/grid-store@2.7.5':
+    dependencies:
+      '@svar-ui/lib-dom': 0.12.1
+      '@svar-ui/lib-state': 1.10.1
+
+  '@svar-ui/lib-data-provider@1.7.4':
+    dependencies:
+      '@svar-ui/lib-state': 1.10.1
+
+  '@svar-ui/lib-dom@0.12.1': {}
+
+  '@svar-ui/lib-dom@0.14.0': {}
+
+  '@svar-ui/lib-state@1.10.1': {}
+
+  '@svar-ui/lib-svelte@0.5.2':
+    dependencies:
+      '@svar-ui/lib-state': 1.10.1
+
+  '@svar-ui/svelte-core@2.6.1':
+    dependencies:
+      '@svar-ui/core-locales': 2.6.1
+      '@svar-ui/lib-dom': 0.14.0
+      '@svar-ui/lib-svelte': 0.5.2
+
+  '@svar-ui/svelte-grid@2.7.5':
+    dependencies:
+      '@svar-ui/grid-data-provider': 2.7.5
+      '@svar-ui/grid-locales': 2.7.5
+      '@svar-ui/grid-store': 2.7.5
+      '@svar-ui/lib-dom': 0.14.0
+      '@svar-ui/lib-state': 1.10.1
+      '@svar-ui/lib-svelte': 0.5.2
+      '@svar-ui/svelte-core': 2.6.1
+      '@svar-ui/svelte-menu': 2.6.1
+      '@svar-ui/svelte-toolbar': 2.6.1
+
+  '@svar-ui/svelte-menu@2.6.1':
+    dependencies:
+      '@svar-ui/lib-dom': 0.14.0
+      '@svar-ui/svelte-core': 2.6.1
+
+  '@svar-ui/svelte-toolbar@2.6.1':
+    dependencies:
+      '@svar-ui/lib-dom': 0.14.0
+      '@svar-ui/svelte-core': 2.6.1
 
   '@sveltejs/acorn-typescript@1.0.13(acorn@8.19.0)':
     dependencies:
