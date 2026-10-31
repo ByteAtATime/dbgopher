@@ -45,27 +45,15 @@
 	);
 </script>
 
-<div class="mx-auto max-w-5xl space-y-6 px-4 py-6">
-	{#if status.type === 'unavailable'}
-		<Alert variant="destructive">
-			<AlertTitle>{status.error.message}</AlertTitle>
-			{#if reason === 'offline'}
-				<AlertDescription>
-					Check that the connector is running and can reach the relay. This page checks again every
-					10 seconds.
-				</AlertDescription>
+<div class="flex h-dvh">
+	<aside class="flex w-64 shrink-0 flex-col border-r bg-sidebar">
+		<h2 class="px-4 pt-4 pb-2 text-sm font-semibold">
+			Tables
+			{#if overview.type === 'loaded'}
+				<span class="font-normal text-muted-foreground">({overview.overview.tables.length})</span>
 			{/if}
-		</Alert>
-	{/if}
-
-	{#if !target}
-		<section class="space-y-3">
-			<h2 class="font-semibold">
-				Tables
-				{#if overview.type === 'loaded'}
-					<span class="font-normal text-muted-foreground">({overview.overview.tables.length})</span>
-				{/if}
-			</h2>
+		</h2>
+		<nav class="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
 			{#if overview.type === 'failed'}
 				<Alert variant="destructive">
 					<AlertTitle>Could not load tables</AlertTitle>
@@ -74,31 +62,57 @@
 					</AlertDescription>
 				</Alert>
 			{:else}
-				<TableList tables={overview.type === 'loaded' ? overview.overview.tables : undefined} />
+				<TableList
+					tables={overview.type === 'loaded' ? overview.overview.tables : undefined}
+					selected={table}
+				/>
 			{/if}
-		</section>
-	{:else}
-		<section class="space-y-3">
-			<h2 class="font-semibold wrap-anywhere">
-				<span class="text-muted-foreground">{target.schema}.</span>{target.table}
-			</h2>
-			<Pagination
-				{offset}
-				limit={PAGE_SIZE}
-				count={rows.type === 'loaded' ? rows.rows.rows.length : undefined}
-				total={info?.rowCount ?? null}
-				totalExact={info?.rowCountExact ?? false}
-				onchange={(next) => (offset = next)}
-			/>
-			{#if rows.type === 'failed'}
+		</nav>
+	</aside>
+
+	<main class="flex min-w-0 flex-1 flex-col">
+		{#if status.type === 'unavailable'}
+			<div class="p-4">
 				<Alert variant="destructive">
-					<AlertDescription>
-						<pre class="font-mono text-xs whitespace-pre-wrap">{rows.error.message}</pre>
-					</AlertDescription>
+					<AlertTitle>{status.error.message}</AlertTitle>
+					{#if reason === 'offline'}
+						<AlertDescription>
+							Check that the connector is running and can reach the relay.
+						</AlertDescription>
+					{/if}
 				</Alert>
+			</div>
+		{/if}
+
+		{#if target}
+			<div class="flex items-center justify-between gap-4 border-b px-2 py-1">
+				<h2 class="min-w-0 truncate font-semibold">
+					<span class="text-muted-foreground">{target.schema}.</span>{target.table}
+				</h2>
+				<Pagination
+					{offset}
+					limit={PAGE_SIZE}
+					count={rows.type === 'loaded' ? rows.rows.rows.length : undefined}
+					total={info?.rowCount ?? null}
+					totalExact={info?.rowCountExact ?? false}
+					onchange={(next) => (offset = next)}
+				/>
+			</div>
+			{#if rows.type === 'failed'}
+				<div class="p-4">
+					<Alert variant="destructive">
+						<AlertDescription>
+							<pre class="font-mono text-xs whitespace-pre-wrap">{rows.error.message}</pre>
+						</AlertDescription>
+					</Alert>
+				</div>
 			{:else}
-				<RowsTable {columns} rows={rows.type === 'loaded' ? rows.rows : undefined} />
+				<div
+					class="min-h-0 flex-1 overflow-auto **:data-[slot=table-container]:overflow-visible [&_thead]:sticky [&_thead]:top-0 [&_thead]:bg-background"
+				>
+					<RowsTable {columns} rows={rows.type === 'loaded' ? rows.rows : undefined} />
+				</div>
 			{/if}
-		</section>
-	{/if}
+		{/if}
+	</main>
 </div>
