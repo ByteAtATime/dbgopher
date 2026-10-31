@@ -120,6 +120,7 @@
 
 	.rows-grid :global(.wx-table-box) {
 		box-sizing: border-box;
+		width: 100% !important;
 	}
 
 	.rows-grid :global(.wx-scroll) {
@@ -134,5 +135,9 @@
 
 	.rows-grid :global(.wx-body .wx-cell) {
 		font-family: var(--font-mono);
+	}
+
+	.rows-grid :global(.wx-cell:last-child) {
+		border-right: var(--wx-table-cell-border);
 	}
 </style>
