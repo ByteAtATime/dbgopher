@@ -37,7 +37,8 @@
 						<Icon class="size-4 shrink-0 text-muted-foreground" />
 					{/if}
 					<span class="min-w-0 flex-1 truncate">
-						{#if !singleSchema}<span class="text-muted-foreground">{table.schema}.</span>{/if}{table.name}
+						{#if !singleSchema}<span class="text-muted-foreground">{table.schema}.</span
+							>{/if}{table.name}
 					</span>
 					<span
 						class="shrink-0 text-xs text-muted-foreground tabular-nums"
