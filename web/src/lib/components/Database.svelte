@@ -46,7 +46,7 @@
 </script>
 
 <div class="flex h-dvh">
-	<aside class="flex w-64 shrink-0 flex-col border-r bg-sidebar">
+	<aside class="flex w-64 shrink-0 flex-col bg-sidebar">
 		<h2 class="px-4 pt-4 pb-2 text-sm font-semibold">
 			Tables
 			{#if overview.type === 'loaded'}
@@ -85,7 +85,7 @@
 		{/if}
 
 		{#if target}
-			<div class="flex items-center justify-between gap-4 border-b px-2 py-1">
+			<div class="flex items-center justify-between gap-4 border-l px-2 py-1">
 				<h2 class="min-w-0 truncate font-semibold">
 					<span class="text-muted-foreground">{target.schema}.</span>{target.table}
 				</h2>
