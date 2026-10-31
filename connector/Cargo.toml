@@ -6,12 +6,20 @@ edition = "2024"
 [dependencies]
 blake2 = "0.11.0"
 chacha20poly1305 = "0.11.0"
+futures-util = { version = "0.3.34", features = ["sink"] }
+hex = "0.4.3"
+prost = "0.14.4"
+rand = "0.10.3"
+rustls = { version = "0.23.46", default-features = false, features = ["ring"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time"] }
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
 ts-rs = { version = "12.0.1", features = ["uuid-impl"] }
 uuid = { version = "1.29.0", features = ["v4", "serde"] }
 zstd = "0.14.3"
 
-[dev-dependencies]
-hex = "0.4.3"
+[build-dependencies]
+prost-build = "0.14.4"
+protox = "0.10.0"
