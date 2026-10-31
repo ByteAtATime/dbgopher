@@ -10,14 +10,17 @@
 	type Props = { tables?: Table[]; selected?: { schema: string; table: string } };
 
 	let { tables, selected }: Props = $props();
+
+	const iconFor = (table: Table) =>
+		table.kind === 'view' || table.kind === 'materializedView' ? ViewIcon : TableIcon;
+	const showIcons = $derived(new Set(tables?.map(iconFor)).size > 1);
 </script>
 
 <ul class="space-y-0.5">
 	{#if tables}
 		{#each tables as table (`${table.schema}.${table.name}`)}
 			{@const active = selected?.schema === table.schema && selected.table === table.name}
-			{@const Icon =
-				table.kind === 'view' || table.kind === 'materializedView' ? ViewIcon : TableIcon}
+			{@const Icon = iconFor(table)}
 			<li>
 				<a
 					class={cn(
@@ -27,7 +30,9 @@
 					aria-current={active ? 'page' : undefined}
 					href={`#${formatRoute({ type: 'browse', schema: table.schema, table: table.name })}`}
 				>
-					<Icon class="size-4 shrink-0 text-muted-foreground" />
+					{#if showIcons}
+						<Icon class="size-4 shrink-0 text-muted-foreground" />
+					{/if}
 					<span class="min-w-0 flex-1 truncate">
 						<span class="text-muted-foreground">{table.schema}.</span>{table.name}
 					</span>
