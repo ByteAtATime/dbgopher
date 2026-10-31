@@ -26,3 +26,9 @@ zstd = "0.14.3"
 [build-dependencies]
 prost-build = "0.14.4"
 protox = "0.10.0"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
