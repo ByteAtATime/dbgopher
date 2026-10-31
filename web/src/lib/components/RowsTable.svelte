@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Grid, Willow, type IColumnConfig } from '@svar-ui/svelte-grid';
+	import BugIcon from '@lucide/svelte/icons/bug';
 	import type { Browse } from '#lib/protocol/client.ts';
 	import RowsTableCell, { setRows } from './RowsTableCell.svelte';
 
@@ -30,7 +31,10 @@
 </script>
 
 <div
-	class={['rows-grid h-full', !rows && '[&_.wx-body]:animate-pulse [&_.wx-body]:mask-b-from-0%']}
+	class={[
+		'rows-grid relative h-full',
+		!rows && '[&_.wx-body]:animate-pulse [&_.wx-body]:mask-b-from-0%'
+	]}
 >
 	<Willow fonts={false}>
 		<Grid
@@ -40,6 +44,15 @@
 			sizes={{ rowHeight: 33, headerHeight: 40, columnWidth: COLUMN_WIDTH }}
 		/>
 	</Willow>
+	{#if rows?.rows.length === 0}
+		<div
+			class="pointer-events-none absolute inset-x-0 top-10 bottom-0 flex flex-col items-center justify-center gap-2 text-muted-foreground"
+		>
+			<BugIcon class="size-8" />
+			<p class="font-medium">No rows to be found here!</p>
+			<p class="text-sm italic">*cricket noises*</p>
+		</div>
+	{/if}
 </div>
 
 <style>
