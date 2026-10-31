@@ -43,11 +43,28 @@
 					: undefined
 		);
 
-	const init = (api: IApi) =>
-		api.intercept('sort-rows', ({ key }) => {
+	let api: IApi | undefined;
+
+	const init = (grid: IApi) => {
+		api = grid;
+		grid.intercept('sort-rows', ({ key }) => {
 			toggle(headers[Number(key)]);
 			return false;
 		});
+	};
+
+	const focus = (event: MouseEvent) => {
+		const cell =
+			event.target instanceof Element
+				? event.target.closest<HTMLElement>('.wx-body .wx-cell')
+				: null;
+		if (!cell) return;
+		api?.exec('focus-cell', {
+			row: Number(cell.dataset.rowId),
+			column: Number(cell.dataset.colId),
+			eventSource: 'click'
+		});
+	};
 
 	const data = $derived(
 		Array.from({ length: rows?.rows.length ?? SKELETON_ROWS }, (_, index) => ({ id: index + 1 }))
@@ -59,6 +76,7 @@
 		'rows-grid relative h-full',
 		!rows && '[&_.wx-body]:animate-pulse [&_.wx-body]:mask-b-from-0%'
 	]}
+	onmousedown={focus}
 >
 	<Willow fonts={false}>
 		<Grid
