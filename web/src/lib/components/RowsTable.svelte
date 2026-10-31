@@ -62,6 +62,10 @@
 		--wx-table-fixed-column-border: 1px solid var(--border);
 	}
 
+	.rows-grid :global(.wx-table-box) {
+		box-sizing: border-box;
+	}
+
 	.rows-grid :global(.wx-header .wx-cell) {
 		color: var(--muted-foreground);
 	}
