@@ -31,7 +31,7 @@
 
 	const gridColumns = $derived<IColumnConfig[]>(
 		headers.map((header, index) => ({
-			id: index,
+			id: index + 1,
 			header: { text: header, cell: RowsTableHeader },
 			width: widths.get(header) ?? COLUMN_WIDTH,
 			resize: true,

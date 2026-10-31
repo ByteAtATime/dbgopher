@@ -13,7 +13,7 @@
 
 	const rows = getRows();
 
-	const value = $derived(rows()?.rows[Number(row.id) - 1]?.[Number(column.id)]);
+	const value = $derived(rows()?.rows[Number(row.id) - 1]?.[Number(column.id) - 1]);
 </script>
 
 {#if value === null}
