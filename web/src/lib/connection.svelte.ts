@@ -65,7 +65,13 @@ export const createConnection = (connectorId: string, connectorKey: Uint8Array) 
 	};
 
 	const select = (next: BrowseOptions | undefined) => {
-		if (target?.schema === next?.schema && target?.table === next?.table) return;
+		if (
+			target?.schema === next?.schema &&
+			target?.table === next?.table &&
+			target?.limit === next?.limit &&
+			target?.offset === next?.offset
+		)
+			return;
 		target = next;
 		rows = { type: 'loading' };
 		void refresh();
