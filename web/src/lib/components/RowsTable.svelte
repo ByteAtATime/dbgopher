@@ -1,29 +1,53 @@
 <script lang="ts">
-	import { Grid, Willow, type IColumnConfig } from '@svar-ui/svelte-grid';
+	import { Grid, Willow, type IApi, type IColumnConfig } from '@svar-ui/svelte-grid';
 	import BugIcon from '@lucide/svelte/icons/bug';
+	import type { Sort } from '#lib/protocol/bindings/Sort.ts';
 	import type { Browse } from '#lib/protocol/client.ts';
 	import RowsTableCell, { setRows } from './RowsTableCell.svelte';
+	import RowsTableHeader, { setSort } from './RowsTableHeader.svelte';
 
-	type Props = { columns: string[]; rows?: Browse };
+	type Props = {
+		columns: string[];
+		rows?: Browse;
+		sort?: Sort;
+		onsort: (sort: Sort | undefined) => void;
+	};
 
 	const COLUMN_WIDTH = 250;
 	const SKELETON_ROWS = 8;
 
-	let { columns, rows }: Props = $props();
+	let { columns, rows, sort, onsort }: Props = $props();
 
 	setRows(() => rows);
+	setSort(() => sort);
 
 	const headers = $derived(rows?.columns.map((column) => column.name) ?? columns);
 
 	const gridColumns = $derived<IColumnConfig[]>(
 		headers.map((header, index) => ({
 			id: index,
-			header,
+			header: { text: header, cell: RowsTableHeader },
 			width: COLUMN_WIDTH,
 			resize: true,
+			sort: true,
 			cell: RowsTableCell
 		}))
 	);
+
+	const toggle = (column: string) =>
+		onsort(
+			sort?.column !== column
+				? { column, direction: 'asc' }
+				: sort.direction === 'asc'
+					? { column, direction: 'desc' }
+					: undefined
+		);
+
+	const init = (api: IApi) =>
+		api.intercept('sort-rows', ({ key }) => {
+			toggle(headers[Number(key)]);
+			return false;
+		});
 
 	const data = $derived(
 		Array.from({ length: rows?.rows.length ?? SKELETON_ROWS }, (_, index) => ({ id: index + 1 }))
@@ -41,6 +65,7 @@
 			{data}
 			columns={gridColumns}
 			select={false}
+			{init}
 			sizes={{ rowHeight: 33, headerHeight: 40, columnWidth: COLUMN_WIDTH }}
 		/>
 	</Willow>
@@ -86,6 +111,7 @@
 
 	.rows-grid :global(.wx-header .wx-cell) {
 		color: var(--muted-foreground);
+		cursor: pointer;
 	}
 
 	.rows-grid :global(.wx-body .wx-cell) {

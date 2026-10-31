@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { createConnection } from '#lib/connection.svelte.ts';
+	import type { Sort } from '#lib/protocol/bindings/Sort.ts';
 	import { RelayError } from '#lib/protocol/client.ts';
 	import { parseRoute } from '#lib/route.ts';
 	import Pagination from './Pagination.svelte';
@@ -24,11 +25,16 @@
 	const table = $derived(
 		route.type === 'browse' ? { schema: route.schema, table: route.table } : undefined
 	);
+	let sort = $derived.by<Sort | undefined>(() => {
+		void table;
+		return undefined;
+	});
 	let offset = $derived.by(() => {
 		void table;
+		void sort;
 		return 0;
 	});
-	const target = $derived(table && { ...table, limit: PAGE_SIZE, offset });
+	const target = $derived(table && { ...table, limit: PAGE_SIZE, offset, sort });
 	$effect(() => connection.select(target));
 	const info = $derived(
 		overview.type === 'loaded' && target
@@ -108,7 +114,12 @@
 				</div>
 			{:else}
 				<div class="min-h-0 flex-1">
-					<RowsTable {columns} rows={rows.type === 'loaded' ? rows.rows : undefined} />
+					<RowsTable
+						{columns}
+						rows={rows.type === 'loaded' ? rows.rows : undefined}
+						{sort}
+						onsort={(next) => (sort = next)}
+					/>
 				</div>
 			{/if}
 		{/if}

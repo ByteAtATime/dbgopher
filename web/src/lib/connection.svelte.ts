@@ -69,7 +69,9 @@ export const createConnection = (connectorId: string, connectorKey: Uint8Array) 
 			target?.schema === next?.schema &&
 			target?.table === next?.table &&
 			target?.limit === next?.limit &&
-			target?.offset === next?.offset
+			target?.offset === next?.offset &&
+			target?.sort?.column === next?.sort?.column &&
+			target?.sort?.direction === next?.sort?.direction
 		)
 			return;
 		target = next;

@@ -427,6 +427,27 @@ describe('relay', () => {
 		expect(await openEmpty()).toEqual({ type: 'browse', columns, rows: [] });
 	});
 
+	it('browses rows sorted by a column', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const payload = 'x'.repeat(100);
+		const { open } = await send({
+			type: 'browse',
+			schema: 'public',
+			table: 'readings',
+			limit: 2,
+			offset: 1,
+			sort: { column: 'id', direction: 'desc' }
+		});
+		expect(await open()).toEqual({
+			type: 'browse',
+			columns: [column('id', 'integer', 23), column('payload', 'text', 25)],
+			rows: [
+				['199999', payload],
+				['199998', payload]
+			]
+		});
+	});
+
 	it('reports database errors to the browser', async () => {
 		const closed = await freePort();
 		await startConnector({

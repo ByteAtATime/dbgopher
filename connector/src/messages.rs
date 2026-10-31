@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::browse::{self, Rows};
+use crate::browse::{self, Rows, Sort};
 use crate::database::Database;
 use crate::overview::{self, Overview};
 
@@ -26,6 +26,9 @@ pub enum Request {
         #[serde(default)]
         #[ts(optional)]
         offset: Option<u32>,
+        #[serde(default)]
+        #[ts(optional)]
+        sort: Option<Sort>,
     },
 }
 
@@ -77,12 +80,13 @@ pub async fn handle(database: &Database, request: Request) -> Response {
             table,
             limit,
             offset,
+            sort,
         } => {
             let limit = limit.unwrap_or(browse::DEFAULT_LIMIT);
             let offset = offset.unwrap_or(0);
             match database
                 .read(async |transaction| {
-                    browse::load(transaction, &schema, &table, limit, offset).await
+                    browse::load(transaction, &schema, &table, limit, offset, sort.as_ref()).await
                 })
                 .await
             {
