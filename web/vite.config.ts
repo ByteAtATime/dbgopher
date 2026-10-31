@@ -1,11 +1,23 @@
 import tailwindcss from '@tailwindcss/vite';
+import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
 import adapter from '@sveltejs/adapter-node';
 import { sveltekit } from '@sveltejs/kit/vite';
 
+const relay = (): Plugin => ({
+	name: 'dbgopher-relay',
+	configureServer: (server) => {
+		server.httpServer?.on('upgrade', async (request, socket, head) => {
+			await server.ssrLoadModule('/src/lib/server/relay/index.ts');
+			globalThis.dbgopherRelay?.handleUpgrade(request, socket, head);
+		});
+	}
+});
+
 export default defineConfig({
 	plugins: [
+		relay(),
 		tailwindcss(),
 		sveltekit({
 			compilerOptions: {

@@ -1,7 +1,7 @@
-import { pgTable, serial, integer, text } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
-export const task = pgTable('task', {
-	id: serial('id').primaryKey(),
-	title: text('title').notNull(),
-	priority: integer('priority').notNull().default(1)
+export const connector = pgTable('connector', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	tokenHash: text('token_hash').notNull(),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 });

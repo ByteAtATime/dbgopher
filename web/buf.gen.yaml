@@ -1,0 +1,7 @@
+version: v2
+inputs:
+  - directory: ../protocol
+plugins:
+  - local: protoc-gen-es
+    out: src/lib/server/relay
+    opt: target=ts

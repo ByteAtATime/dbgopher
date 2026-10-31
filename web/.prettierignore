@@ -11,3 +11,4 @@ bun.lockb
 
 # Generated
 /src/lib/protocol/bindings/
+/src/lib/server/relay/relay_pb.ts
