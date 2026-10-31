@@ -133,6 +133,10 @@
 		cursor: pointer;
 	}
 
+	.rows-grid :global(.wx-header .wx-cell:focus) {
+		outline: none;
+	}
+
 	.rows-grid :global(.wx-body .wx-cell) {
 		font-family: var(--font-mono);
 	}
