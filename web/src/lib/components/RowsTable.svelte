@@ -29,7 +29,9 @@
 	);
 </script>
 
-<div class="rows-grid h-full">
+<div
+	class={['rows-grid h-full', !rows && '[&_.wx-body]:animate-pulse [&_.wx-body]:mask-b-from-0%']}
+>
 	<Willow fonts={false}>
 		<Grid
 			{data}
