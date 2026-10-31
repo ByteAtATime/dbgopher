@@ -22,7 +22,6 @@
 		"db:migrate": "drizzle-kit migrate",
 		"db:studio": "drizzle-kit studio",
 		"proto": "buf generate",
-		"connector:create": "node --env-file-if-exists=.env scripts/create-connector.ts",
 		"test:e2e": "vite build && cargo build --manifest-path ../connector/Cargo.toml && vitest run --project e2e",
 		"auth:schema": "auth generate --config src/lib/server/auth.ts --output src/lib/server/db/auth.schema.ts --yes"
 	},

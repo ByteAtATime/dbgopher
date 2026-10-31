@@ -1,5 +1,5 @@
-import { timingSafeEqual } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { and, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from './db';
 import { connector } from './db/schema';
@@ -24,4 +24,20 @@ export const ownsConnector = async (userId: string, id: string) => {
 		.from(connector)
 		.where(and(eq(connector.id, id), eq(connector.userId, userId)));
 	return row !== undefined;
+};
+
+export const listConnectors = (userId: string) =>
+	db
+		.select({ id: connector.id, createdAt: connector.createdAt })
+		.from(connector)
+		.where(eq(connector.userId, userId))
+		.orderBy(desc(connector.createdAt));
+
+export const createConnector = async (userId: string) => {
+	const token = randomBytes(32).toString('base64url');
+	const [{ id }] = await db
+		.insert(connector)
+		.values({ userId, tokenHash: hashToken(token) })
+		.returning({ id: connector.id });
+	return { id, token };
 };
