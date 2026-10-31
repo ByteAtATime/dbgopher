@@ -36,9 +36,7 @@
 				</Table.Row>
 			{:else}
 				<Table.Row>
-					<Table.Cell colspan={3} class="text-muted-foreground">
-					    Unable to load tables
-					</Table.Cell>
+					<Table.Cell colspan={3} class="text-muted-foreground">Unable to load tables</Table.Cell>
 				</Table.Row>
 			{/each}
 		{:else}
