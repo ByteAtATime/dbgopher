@@ -14,6 +14,9 @@
 	const iconFor = (table: Table) =>
 		table.kind === 'view' || table.kind === 'materializedView' ? ViewIcon : TableIcon;
 	const showIcons = $derived(new Set(tables?.map(iconFor)).size > 1);
+	const singleSchema = $derived(
+		tables && tables.length > 0 ? new Set(tables.map((t) => t.schema)).size === 1 : false
+	);
 </script>
 
 <ul class="space-y-0.5">
@@ -34,7 +37,7 @@
 						<Icon class="size-4 shrink-0 text-muted-foreground" />
 					{/if}
 					<span class="min-w-0 flex-1 truncate">
-						<span class="text-muted-foreground">{table.schema}.</span>{table.name}
+						{#if !singleSchema}<span class="text-muted-foreground">{table.schema}.</span>{/if}{table.name}
 					</span>
 					<span
 						class="shrink-0 text-xs text-muted-foreground tabular-nums"
