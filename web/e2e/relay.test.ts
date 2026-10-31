@@ -6,9 +6,10 @@ import { createServer } from 'node:net';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { hashToken } from '../src/lib/server/connectors';
+import { hashToken } from '../src/lib/server/tokens';
 import { connector } from '../src/lib/server/db/schema';
 import { createChannel } from '../src/lib/protocol/channel';
+import { ConnectorError, createClient, RelayError } from '../src/lib/protocol/client';
 import type { Column } from '../src/lib/protocol/bindings/Column';
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -111,6 +112,13 @@ const send = async (body: unknown, key = credentials.key) => {
 };
 
 const hello = (key = credentials.key) => send({ type: 'hello' }, key);
+
+const browserClient = (connectorKey = credentials.key) =>
+	createClient({
+		connectorId: credentials.id,
+		connectorKey,
+		fetch: (path, init) => fetch(`http://127.0.0.1:${port}${path}`, init)
+	});
 
 const createTarget = async () => {
 	await client.unsafe(`CREATE DATABASE ${TARGET_DATABASE}`);
@@ -406,5 +414,51 @@ describe('relay', () => {
 			check();
 		});
 		expect((await hello()).response.status).toBe(200);
+	});
+});
+
+describe('browser client', () => {
+	it('loads hello and the overview', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const client = await browserClient();
+		expect(await client.hello()).toMatchObject({ type: 'hello', readOnly: true });
+		const { tables } = await client.overview();
+		expect(tables.map((table) => `${table.schema}.${table.name}`)).toEqual([
+			'audit.Event Log',
+			'public.customer_totals',
+			'public.customers',
+			'public.events',
+			'public.order_items',
+			'public.orders',
+			'public.readings',
+			'public.recent_orders',
+			'public.shipments'
+		]);
+	});
+
+	it('reports offline connectors', async () => {
+		const client = await browserClient();
+		await expect(client.hello()).rejects.toMatchObject({ reason: 'offline' });
+	});
+
+	it('reports keys the connector cannot use', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const error = await (
+			await browserClient(randomBytes(32))
+		)
+			.hello()
+			.catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(RelayError);
+		expect(error).toMatchObject({ reason: 'undecryptable' });
+	});
+
+	it('reports database errors', async () => {
+		const closed = await freePort();
+		await startConnector({
+			DATABASE_URL: `postgres://postgres@127.0.0.1:${closed}/postgres`
+		}).waitFor('Connected to relay');
+		const error = await (await browserClient()).overview().catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(ConnectorError);
+		expect(error).toMatchObject({ message: expect.stringContaining('error connecting to server') });
 	});
 });

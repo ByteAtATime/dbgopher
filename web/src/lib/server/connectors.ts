@@ -1,10 +1,9 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from './db';
 import { connector } from './db/schema';
-
-export const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
+import { hashToken } from './tokens';
 
 export const verifyConnector = async (id: string, token: string) => {
 	if (!z.uuid().safeParse(id).success) return false;
