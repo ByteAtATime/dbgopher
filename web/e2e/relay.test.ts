@@ -1,13 +1,13 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { hashToken } from '../src/lib/server/tokens';
-import { connector } from '../src/lib/server/db/schema';
+import { connector, session, user } from '../src/lib/server/db/schema';
 import { createChannel } from '../src/lib/protocol/channel';
 import { ConnectorError, createClient, RelayError } from '../src/lib/protocol/client';
 import type { Column } from '../src/lib/protocol/bindings/Column';
@@ -18,6 +18,7 @@ const FIXTURE = new URL('./fixture.sql', import.meta.url);
 const CONNECTOR_BINARY = new URL('../../connector/target/debug/connector', import.meta.url)
 	.pathname;
 const SERVER = new URL('../server.js', import.meta.url).pathname;
+const AUTH_SECRET = randomBytes(32).toString('hex');
 
 type Process = {
 	child: ChildProcess;
@@ -67,12 +68,36 @@ let relay: Process;
 let client: postgres.Sql;
 let targetUrl: string;
 let credentials: { id: string; token: string; key: Uint8Array };
+let ownerCookie: string;
+let strangerCookie: string;
+
+const signIn = async (db: ReturnType<typeof drizzle>) => {
+	const id = randomUUID();
+	await db.insert(user).values({ id, name: 'E2E', email: `${id}@example.com` });
+	const token = randomBytes(32).toString('base64url');
+	await db.insert(session).values({
+		id: randomUUID(),
+		token,
+		userId: id,
+		expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+		updatedAt: new Date()
+	});
+	const signature = createHmac('sha256', AUTH_SECRET).update(token).digest('base64');
+	return {
+		userId: id,
+		cookie: `better-auth.session_token=${encodeURIComponent(`${token}.${signature}`)}`
+	};
+};
 
 const startRelay = async () => {
 	relay = start('node', [SERVER], {
 		PORT: String(port),
 		HOST: '127.0.0.1',
-		DATABASE_URL: DATABASE_URL ?? ''
+		DATABASE_URL: DATABASE_URL ?? '',
+		ORIGIN: `http://127.0.0.1:${port}`,
+		BETTER_AUTH_SECRET: AUTH_SECRET,
+		GOOGLE_CLIENT_ID: 'e2e',
+		GOOGLE_CLIENT_SECRET: 'e2e'
 	});
 	for (;;) {
 		const ready = await fetch(`http://127.0.0.1:${port}/`).then(
@@ -94,10 +119,10 @@ const startConnector = (overrides: Record<string, string> = {}) =>
 		...overrides
 	});
 
-const post = (sealed: Uint8Array, id = credentials.id) =>
-	fetch(`http://127.0.0.1:${port}/v1/connectors/${id}/rpc`, {
+const post = (sealed: Uint8Array, cookie = ownerCookie) =>
+	fetch(`http://127.0.0.1:${port}/v1/connectors/${credentials.id}/rpc`, {
 		method: 'POST',
-		headers: { 'content-type': 'application/octet-stream', 'x-session-id': 'e2e' },
+		headers: { 'content-type': 'application/octet-stream', 'x-session-id': 'e2e', cookie },
 		body: new Uint8Array(sealed)
 	});
 
@@ -117,7 +142,11 @@ const browserClient = (connectorKey = credentials.key) =>
 	createClient({
 		connectorId: credentials.id,
 		connectorKey,
-		fetch: (path, init) => fetch(`http://127.0.0.1:${port}${path}`, init)
+		fetch: (path, init) =>
+			fetch(`http://127.0.0.1:${port}${path}`, {
+				...init,
+				headers: { ...Object.fromEntries(new Headers(init?.headers)), cookie: ownerCookie }
+			})
 	});
 
 const createTarget = async () => {
@@ -142,10 +171,14 @@ beforeAll(async () => {
 	if (!DATABASE_URL) throw new Error('DATABASE_URL is not set');
 	client = postgres(DATABASE_URL);
 	targetUrl = await createTarget();
+	const db = drizzle(client);
+	const owner = await signIn(db);
+	ownerCookie = owner.cookie;
+	strangerCookie = (await signIn(db)).cookie;
 	const token = randomBytes(32).toString('base64url');
-	const [row] = await drizzle(client)
+	const [row] = await db
 		.insert(connector)
-		.values({ tokenHash: hashToken(token) })
+		.values({ userId: owner.userId, tokenHash: hashToken(token) })
 		.returning({ id: connector.id });
 	credentials = { id: row.id, token, key: randomBytes(32) };
 	port = await freePort();
@@ -164,6 +197,19 @@ afterAll(async () => {
 });
 
 describe('relay', () => {
+	it('requires a signed-in user', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const channel = await createChannel(credentials.key, credentials.id);
+		expect((await post(channel.sealRequest({ type: 'hello' }).sealed, '')).status).toBe(401);
+	});
+
+	it("hides connectors from users who don't own them", async () => {
+		await startConnector().waitFor('Connected to relay');
+		const channel = await createChannel(credentials.key, credentials.id);
+		const response = await post(channel.sealRequest({ type: 'hello' }).sealed, strangerCookie);
+		expect(response.status).toBe(404);
+	});
+
 	it('reports connectors that are not connected as offline', async () => {
 		const { response } = await hello();
 		expect(response.status).toBe(503);

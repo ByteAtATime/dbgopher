@@ -1,8 +1,12 @@
 import { error, json } from '@sveltejs/kit';
+import { ownsConnector } from '#lib/server/connectors.ts';
 import { MAX_SEALED_SIZE, relay } from '#lib/server/relay/index.ts';
 import { Rejection_Reason } from '#lib/server/relay/relay_pb.ts';
 
-export const POST = async ({ params, request }) => {
+export const POST = async ({ params, request, locals }) => {
+	if (!locals.user) error(401, 'Sign in to use this connector');
+	if (!(await ownsConnector(locals.user.id, params.id))) error(404, 'Connector not found');
+
 	const sealed = new Uint8Array(await request.arrayBuffer());
 	if (sealed.length > MAX_SEALED_SIZE) error(413, 'Request is too large');
 

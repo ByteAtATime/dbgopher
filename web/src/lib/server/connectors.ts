@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from './db';
 import { connector } from './db/schema';
@@ -15,4 +15,13 @@ export const verifyConnector = async (id: string, token: string) => {
 		row !== undefined &&
 		timingSafeEqual(Buffer.from(row.tokenHash, 'hex'), Buffer.from(hashToken(token), 'hex'))
 	);
+};
+
+export const ownsConnector = async (userId: string, id: string) => {
+	if (!z.uuid().safeParse(id).success) return false;
+	const [row] = await db
+		.select({ id: connector.id })
+		.from(connector)
+		.where(and(eq(connector.id, id), eq(connector.userId, userId)));
+	return row !== undefined;
 };
