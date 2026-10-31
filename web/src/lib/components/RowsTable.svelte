@@ -27,11 +27,13 @@
 
 	const headers = $derived((rows?.columns ?? columns).map((column) => column.name));
 
+	const widths = new Map<string, number>();
+
 	const gridColumns = $derived<IColumnConfig[]>(
 		headers.map((header, index) => ({
 			id: index,
 			header: { text: header, cell: RowsTableHeader },
-			width: COLUMN_WIDTH,
+			width: widths.get(header) ?? COLUMN_WIDTH,
 			resize: true,
 			sort: true,
 			cell: RowsTableCell
@@ -54,6 +56,9 @@
 		grid.intercept('sort-rows', ({ key }) => {
 			toggle(headers[Number(key)]);
 			return false;
+		});
+		grid.on('resize-column', ({ id, width }) => {
+			if (width !== undefined) widths.set(headers[Number(id)], width);
 		});
 	};
 
