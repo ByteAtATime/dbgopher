@@ -155,6 +155,7 @@
 
 	.rows-grid :global(.wx-body .wx-cell) {
 		font-family: var(--font-mono);
+		user-select: none;
 	}
 
 	.rows-grid :global(.wx-body .wx-row:has(+ .wx-row:hover)) {
