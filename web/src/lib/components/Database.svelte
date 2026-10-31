@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { createConnection } from '#lib/connection.svelte.ts';
 	import { RelayError } from '#lib/protocol/client.ts';
+	import { parseRoute } from '#lib/route.ts';
 	import RowsTable from './RowsTable.svelte';
 	import TableList from './TableList.svelte';
 	import { Alert, AlertTitle, AlertDescription } from '#lib/components/ui/alert/index.ts';
@@ -15,7 +17,18 @@
 	const status = $derived(connection.status);
 	const overview = $derived(connection.overview);
 	const rows = $derived(connection.rows);
-	const first = $derived(overview.type === 'loaded' ? overview.overview.tables[0] : undefined);
+	const route = $derived(parseRoute(page.url.hash.slice(1)));
+	const target = $derived(
+		route.type === 'browse' ? { schema: route.schema, table: route.table } : undefined
+	);
+	$effect(() => connection.select(target));
+	const columns = $derived(
+		overview.type === 'loaded' && target
+			? (overview.overview.tables
+					.find((table) => table.schema === target.schema && table.name === target.table)
+					?.columns.map((column) => column.name) ?? [])
+			: []
+	);
 	const reason = $derived(
 		status.type === 'unavailable' && status.error instanceof RelayError
 			? status.error.reason
@@ -36,29 +49,29 @@
 		</Alert>
 	{/if}
 
-	<section class="space-y-3">
-		<h2 class="font-semibold">
-			Tables
-			{#if overview.type === 'loaded'}
-				<span class="font-normal text-muted-foreground">({overview.overview.tables.length})</span>
+	{#if !target}
+		<section class="space-y-3">
+			<h2 class="font-semibold">
+				Tables
+				{#if overview.type === 'loaded'}
+					<span class="font-normal text-muted-foreground">({overview.overview.tables.length})</span>
+				{/if}
+			</h2>
+			{#if overview.type === 'failed'}
+				<Alert variant="destructive">
+					<AlertTitle>Could not load tables</AlertTitle>
+					<AlertDescription>
+						<pre class="font-mono text-xs whitespace-pre-wrap">{overview.error.message}</pre>
+					</AlertDescription>
+				</Alert>
+			{:else}
+				<TableList tables={overview.type === 'loaded' ? overview.overview.tables : undefined} />
 			{/if}
-		</h2>
-		{#if overview.type === 'failed'}
-			<Alert variant="destructive">
-				<AlertTitle>Could not load tables</AlertTitle>
-				<AlertDescription>
-					<pre class="font-mono text-xs whitespace-pre-wrap">{overview.error.message}</pre>
-				</AlertDescription>
-			</Alert>
-		{:else}
-			<TableList tables={overview.type === 'loaded' ? overview.overview.tables : undefined} />
-		{/if}
-	</section>
-
-	{#if first}
+		</section>
+	{:else}
 		<section class="space-y-3">
 			<h2 class="font-semibold wrap-anywhere">
-				<span class="text-muted-foreground">{first.schema}.</span>{first.name}
+				<span class="text-muted-foreground">{target.schema}.</span>{target.table}
 			</h2>
 			{#if rows.type === 'failed'}
 				<Alert variant="destructive">
@@ -67,10 +80,7 @@
 					</AlertDescription>
 				</Alert>
 			{:else}
-				<RowsTable
-					columns={first.columns.map((column) => column.name)}
-					rows={rows.type === 'loaded' ? rows.rows : undefined}
-				/>
+				<RowsTable {columns} rows={rows.type === 'loaded' ? rows.rows : undefined} />
 			{/if}
 		</section>
 	{/if}

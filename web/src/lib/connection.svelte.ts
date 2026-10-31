@@ -1,7 +1,7 @@
-import type { Table } from './protocol/bindings/Table.ts';
 import {
 	createClient,
 	type Browse,
+	type BrowseOptions,
 	type Client,
 	type Hello,
 	type Overview
@@ -36,12 +36,9 @@ const load = async (client: Client): Promise<OverviewState> => {
 	}
 };
 
-const browse = async (client: Client, table: Table): Promise<RowsState> => {
+const browse = async (client: Client, options: BrowseOptions): Promise<RowsState> => {
 	try {
-		return {
-			type: 'loaded',
-			rows: await client.browse({ schema: table.schema, table: table.name })
-		};
+		return { type: 'loaded', rows: await client.browse(options) };
 	} catch (error) {
 		return { type: 'failed', error: toError(error) };
 	}
@@ -51,12 +48,34 @@ export const createConnection = (connectorId: string, connectorKey: Uint8Array) 
 	let status = $state<Status>({ type: 'connecting' });
 	let overview = $state<OverviewState>({ type: 'loading' });
 	let rows = $state<RowsState>({ type: 'loading' });
+	let target: BrowseOptions | undefined;
+	let browsing: BrowseOptions | undefined;
+	let client: Client | undefined;
+	let stopped = false;
+
+	const refresh = async () => {
+		const current = target;
+		if (!client || !current || browsing === current) return;
+		if (status.type !== 'online' || rows.type === 'loaded') return;
+		browsing = current;
+		const browsed = await browse(client, current);
+		if (browsing === current) browsing = undefined;
+		if (stopped || target !== current) return;
+		rows = browsed;
+	};
+
+	const select = (next: BrowseOptions | undefined) => {
+		if (target?.schema === next?.schema && target?.table === next?.table) return;
+		target = next;
+		rows = { type: 'loading' };
+		void refresh();
+	};
 
 	const start = () => {
-		let stopped = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 
-		const poll = async (client: Client) => {
+		const poll = async () => {
+			if (!client) return;
 			const next = await check(client);
 			if (stopped) return;
 			status = next;
@@ -65,18 +84,20 @@ export const createConnection = (connectorId: string, connectorKey: Uint8Array) 
 				if (stopped) return;
 				overview = loaded;
 			}
-			const [first] = overview.type === 'loaded' ? overview.overview.tables : [];
-			if (status.type === 'online' && first && rows.type !== 'loaded') {
-				const browsed = await browse(client, first);
-				if (stopped) return;
-				rows = browsed;
-			}
-			timer = setTimeout(() => poll(client), POLL_INTERVAL_MS);
+			await refresh();
+			if (stopped) return;
+			timer = setTimeout(poll, POLL_INTERVAL_MS);
 		};
 
-		createClient({ connectorId, connectorKey }).then(poll, (error) => {
-			status = { type: 'unavailable', error: toError(error) };
-		});
+		createClient({ connectorId, connectorKey }).then(
+			(created) => {
+				client = created;
+				return poll();
+			},
+			(error) => {
+				status = { type: 'unavailable', error: toError(error) };
+			}
+		);
 
 		return () => {
 			stopped = true;
@@ -94,6 +115,7 @@ export const createConnection = (connectorId: string, connectorKey: Uint8Array) 
 		get rows() {
 			return rows;
 		},
+		select,
 		start
 	};
 };

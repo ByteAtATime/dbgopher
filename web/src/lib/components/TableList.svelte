@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { formatBytes, formatRowCount } from '#lib/format.ts';
+	import { formatRoute } from '#lib/route.ts';
 	import type { Table as TableType } from '#lib/protocol/bindings/Table.ts';
 	import * as Table from '#lib/components/ui/table/index.ts';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.ts';
@@ -22,7 +23,12 @@
 			{#each tables as table (`${table.schema}.${table.name}`)}
 				<Table.Row>
 					<Table.Cell class="wrap-anywhere">
-						<span class="text-muted-foreground">{table.schema}.</span>{table.name}
+						<a
+							class="hover:underline"
+							href={`#${formatRoute({ type: 'browse', schema: table.schema, table: table.name })}`}
+						>
+							<span class="text-muted-foreground">{table.schema}.</span>{table.name}
+						</a>
 					</Table.Cell>
 					<Table.Cell
 						class="text-right tabular-nums"
