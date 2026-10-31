@@ -16,7 +16,9 @@ export type OverviewState =
 	{ type: 'loading' } | { type: 'loaded'; overview: Overview } | { type: 'failed'; error: Error };
 
 export type RowsState =
-	{ type: 'loading' } | { type: 'loaded'; rows: Browse } | { type: 'failed'; error: Error };
+	| { type: 'loading'; previous?: Browse }
+	| { type: 'loaded'; rows: Browse }
+	| { type: 'failed'; error: Error };
 
 const toError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)));
 
@@ -74,8 +76,18 @@ export const createConnection = (connectorId: string, connectorKey: Uint8Array) 
 			target?.sort?.direction === next?.sort?.direction
 		)
 			return;
+		const sameTable = target?.schema === next?.schema && target?.table === next?.table;
 		target = next;
-		rows = { type: 'loading' };
+		rows = {
+			type: 'loading',
+			previous: !sameTable
+				? undefined
+				: rows.type === 'loaded'
+					? rows.rows
+					: rows.type === 'loading'
+						? rows.previous
+						: undefined
+		};
 		void refresh();
 	};
 

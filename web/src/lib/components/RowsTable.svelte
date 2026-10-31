@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Grid, Willow, type IApi, type IColumnConfig } from '@svar-ui/svelte-grid';
 	import BugIcon from '@lucide/svelte/icons/bug';
+	import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
 	import type { Column } from '#lib/protocol/bindings/Column.ts';
 	import type { Sort } from '#lib/protocol/bindings/Sort.ts';
 	import type { Browse } from '#lib/protocol/client.ts';
@@ -11,13 +12,14 @@
 		columns: Column[];
 		rows?: Browse;
 		sort?: Sort;
+		loading?: boolean;
 		onsort: (sort: Sort | undefined) => void;
 	};
 
 	const COLUMN_WIDTH = 250;
 	const SKELETON_ROWS = 8;
 
-	let { columns, rows, sort, onsort }: Props = $props();
+	let { columns, rows, sort, loading = false, onsort }: Props = $props();
 
 	setRows(() => rows);
 	setSort(() => sort);
@@ -89,7 +91,13 @@
 			sizes={{ rowHeight: 33, headerHeight: 40, columnWidth: COLUMN_WIDTH }}
 		/>
 	</Willow>
-	{#if rows?.rows.length === 0}
+	{#if rows && loading}
+		<div
+			class="absolute inset-x-0 top-10 bottom-0 z-10 flex items-center justify-center bg-background/60"
+		>
+			<LoaderCircleIcon class="size-8 animate-spin text-muted-foreground" />
+		</div>
+	{:else if rows?.rows.length === 0}
 		<div
 			class="pointer-events-none absolute inset-x-0 top-10 bottom-0 flex flex-col items-center justify-center gap-2 text-muted-foreground"
 		>

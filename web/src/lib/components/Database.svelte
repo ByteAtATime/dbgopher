@@ -116,7 +116,12 @@
 				<div class="min-h-0 flex-1">
 					<RowsTable
 						{columns}
-						rows={rows.type === 'loaded' ? rows.rows : undefined}
+						rows={rows.type === 'loaded'
+							? rows.rows
+							: rows.type === 'loading'
+								? rows.previous
+								: undefined}
+						loading={rows.type === 'loading'}
 						{sort}
 						onsort={(next) => (sort = next)}
 					/>
