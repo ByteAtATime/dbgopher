@@ -178,7 +178,7 @@ beforeAll(async () => {
 	const token = randomBytes(32).toString('base64url');
 	const [row] = await db
 		.insert(connector)
-		.values({ userId: owner.userId, tokenHash: hashToken(token) })
+		.values({ userId: owner.userId, name: 'e2e', tokenHash: hashToken(token) })
 		.returning({ id: connector.id });
 	credentials = { id: row.id, token, key: randomBytes(32) };
 	port = await freePort();

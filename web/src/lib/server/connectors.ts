@@ -28,16 +28,16 @@ export const ownsConnector = async (userId: string, id: string) => {
 
 export const listConnectors = (userId: string) =>
 	db
-		.select({ id: connector.id, createdAt: connector.createdAt })
+		.select({ id: connector.id, name: connector.name, createdAt: connector.createdAt })
 		.from(connector)
 		.where(eq(connector.userId, userId))
 		.orderBy(desc(connector.createdAt));
 
-export const createConnector = async (userId: string) => {
+export const createConnector = async (userId: string, name: string) => {
 	const token = randomBytes(32).toString('base64url');
 	const [{ id }] = await db
 		.insert(connector)
-		.values({ userId, tokenHash: hashToken(token) })
+		.values({ userId, name, tokenHash: hashToken(token) })
 		.returning({ id: connector.id });
 	return { id, token };
 };

@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { Button } from '#lib/components/ui/button/index.ts';
+	import { Input } from '#lib/components/ui/input/index.ts';
 	import { generateKey } from '#lib/keys.ts';
 	import type { PageProps, SubmitFunction } from './$types';
 
@@ -52,14 +53,15 @@
 								href={resolve('/c/[id]', { id: connector.id })}
 								class="flex justify-between gap-4 p-3 text-sm hover:bg-muted"
 							>
-								<span class="font-mono">{connector.id}</span>
+								<span>{connector.name}</span>
 								<span class="text-muted-foreground">{connector.createdAt.toLocaleString()}</span>
 							</a>
 						</li>
 					{/each}
 				</ul>
 			{/if}
-			<form method="POST" action="?/createConnector" use:enhance={create}>
+			<form method="POST" action="?/createConnector" use:enhance={create} class="flex gap-2">
+				<Input name="name" placeholder="Name" aria-label="Name" required />
 				<Button type="submit">New connector</Button>
 			</form>
 		</section>
