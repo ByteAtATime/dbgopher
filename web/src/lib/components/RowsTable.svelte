@@ -1,13 +1,14 @@
 <script lang="ts">
 	import { Grid, Willow, type IApi, type IColumnConfig } from '@svar-ui/svelte-grid';
 	import BugIcon from '@lucide/svelte/icons/bug';
+	import type { Column } from '#lib/protocol/bindings/Column.ts';
 	import type { Sort } from '#lib/protocol/bindings/Sort.ts';
 	import type { Browse } from '#lib/protocol/client.ts';
 	import RowsTableCell, { setRows } from './RowsTableCell.svelte';
-	import RowsTableHeader, { setSort } from './RowsTableHeader.svelte';
+	import RowsTableHeader, { setColumns, setSort } from './RowsTableHeader.svelte';
 
 	type Props = {
-		columns: string[];
+		columns: Column[];
 		rows?: Browse;
 		sort?: Sort;
 		onsort: (sort: Sort | undefined) => void;
@@ -20,8 +21,9 @@
 
 	setRows(() => rows);
 	setSort(() => sort);
+	setColumns(() => rows?.columns ?? columns);
 
-	const headers = $derived(rows?.columns.map((column) => column.name) ?? columns);
+	const headers = $derived((rows?.columns ?? columns).map((column) => column.name));
 
 	const gridColumns = $derived<IColumnConfig[]>(
 		headers.map((header, index) => ({
@@ -101,7 +103,7 @@
 <style>
 	.rows-grid :global(.wx-willow-theme) {
 		--wx-font-family: var(--font-sans);
-		--wx-font-size: var(--text-xs);
+		--wx-font-size: var(--text-sm);
 		--wx-line-height: 16px;
 		--wx-color-font: var(--foreground);
 		--wx-color-font-alt: var(--muted-foreground);

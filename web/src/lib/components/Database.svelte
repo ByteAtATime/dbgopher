@@ -43,7 +43,7 @@
 				)
 			: undefined
 	);
-	const columns = $derived(info?.columns.map((column) => column.name) ?? []);
+	const columns = $derived(info?.columns ?? []);
 	const reason = $derived(
 		status.type === 'unavailable' && status.error instanceof RelayError
 			? status.error.reason
