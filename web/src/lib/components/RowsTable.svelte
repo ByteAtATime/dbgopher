@@ -66,6 +66,11 @@
 		box-sizing: border-box;
 	}
 
+	.rows-grid :global(.wx-scroll) {
+		scrollbar-width: thin;
+		scrollbar-color: var(--muted-foreground) transparent;
+	}
+
 	.rows-grid :global(.wx-header .wx-cell) {
 		color: var(--muted-foreground);
 	}
