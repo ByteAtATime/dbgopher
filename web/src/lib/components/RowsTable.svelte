@@ -131,6 +131,7 @@
 	.rows-grid :global(.wx-table-box) {
 		box-sizing: border-box;
 		width: 100% !important;
+		border-left: none;
 	}
 
 	.rows-grid :global(.wx-scroll) {
@@ -149,6 +150,22 @@
 
 	.rows-grid :global(.wx-body .wx-cell) {
 		font-family: var(--font-mono);
+	}
+
+	.rows-grid :global(.wx-body .wx-row:has(+ .wx-row:hover)) {
+		border-bottom-color: var(--muted-foreground);
+	}
+
+	.rows-grid :global(.wx-body .wx-row:hover) {
+		--wx-table-cell-border: 1px solid var(--muted-foreground);
+
+		:global(.wx-cell) {
+			background: var(--muted);
+		}
+	}
+
+	.rows-grid :global(.wx-cell:first-child) {
+		border-left: var(--wx-table-cell-border);
 	}
 
 	.rows-grid :global(.wx-cell:last-child) {
