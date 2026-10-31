@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
@@ -8,8 +9,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { hashToken } from '../src/lib/server/connectors';
 import { connector } from '../src/lib/server/db/schema';
 import { createChannel } from '../src/lib/protocol/channel';
+import type { Column } from '../src/lib/protocol/bindings/Column';
 
 const DATABASE_URL = process.env.DATABASE_URL;
+const TARGET_DATABASE = `dbgopher_e2e_${randomBytes(4).toString('hex')}`;
+const FIXTURE = new URL('./fixture.sql', import.meta.url);
 const CONNECTOR_BINARY = new URL('../../connector/target/debug/connector', import.meta.url)
 	.pathname;
 const SERVER = new URL('../server.js', import.meta.url).pathname;
@@ -60,6 +64,7 @@ const exitCode = async (child: ChildProcess) => child.exitCode ?? (await once(ch
 let port: number;
 let relay: Process;
 let client: postgres.Sql;
+let targetUrl: string;
 let credentials: { id: string; token: string; key: Uint8Array };
 
 const startRelay = async () => {
@@ -84,6 +89,7 @@ const startConnector = (overrides: Record<string, string> = {}) =>
 		CONNECTOR_ID: credentials.id,
 		CONNECTOR_TOKEN: credentials.token,
 		CONNECTOR_KEY: Buffer.from(credentials.key).toString('hex'),
+		DATABASE_URL: targetUrl,
 		...overrides
 	});
 
@@ -94,9 +100,9 @@ const post = (sealed: Uint8Array, id = credentials.id) =>
 		body: new Uint8Array(sealed)
 	});
 
-const hello = async (key = credentials.key) => {
+const send = async (body: unknown, key = credentials.key) => {
 	const channel = await createChannel(key, credentials.id);
-	const { id, sealed } = channel.sealRequest({ type: 'hello' });
+	const { id, sealed } = channel.sealRequest(body);
 	const response = await post(sealed);
 	return {
 		response,
@@ -104,9 +110,30 @@ const hello = async (key = credentials.key) => {
 	};
 };
 
+const hello = (key = credentials.key) => send({ type: 'hello' }, key);
+
+const createTarget = async () => {
+	await client.unsafe(`CREATE DATABASE ${TARGET_DATABASE}`);
+	const url = new URL(DATABASE_URL ?? '');
+	url.pathname = `/${TARGET_DATABASE}`;
+	const target = postgres(url.href);
+	await target.unsafe(await readFile(FIXTURE, 'utf8'));
+	await target`VACUUM readings`;
+	await target.end();
+	return url.href;
+};
+
+const column = (
+	name: string,
+	typeName: string,
+	typeOid: number,
+	flags: Partial<Pick<Column, 'nullable' | 'hasDefault'>> = {}
+): Column => ({ name, typeOid, typeName, nullable: false, hasDefault: false, ...flags });
+
 beforeAll(async () => {
 	if (!DATABASE_URL) throw new Error('DATABASE_URL is not set');
 	client = postgres(DATABASE_URL);
+	targetUrl = await createTarget();
 	const token = randomBytes(32).toString('base64url');
 	const [row] = await drizzle(client)
 		.insert(connector)
@@ -124,6 +151,7 @@ afterEach(() => {
 
 afterAll(async () => {
 	for (const child of children) child.kill();
+	await client.unsafe(`DROP DATABASE IF EXISTS ${TARGET_DATABASE} WITH (FORCE)`);
 	await client.end();
 });
 
@@ -137,7 +165,182 @@ describe('relay', () => {
 		await startConnector().waitFor('Connected to relay');
 		const { response, open } = await hello();
 		expect(response.status).toBe(200);
-		expect(await open()).toEqual({ type: 'hello', protocolVersion: 1, connectorVersion: '0.1.0' });
+		expect(await open()).toEqual({
+			type: 'hello',
+			protocolVersion: 1,
+			connectorVersion: '0.1.0',
+			capabilities: ['overview'],
+			readOnly: true
+		});
+	});
+
+	it('describes the tables, columns and keys of the database', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const { response, open } = await send({ type: 'overview' });
+		expect(response.status).toBe(200);
+		expect(await open()).toEqual({
+			type: 'overview',
+			tables: [
+				{
+					schema: 'audit',
+					name: 'Event Log',
+					kind: 'table',
+					rowCount: 1,
+					rowCountExact: true,
+					totalBytes: expect.any(Number),
+					columns: [
+						column('id', 'integer', 23),
+						column('Payload', 'jsonb', 3802, { nullable: true })
+					],
+					primaryKey: ['id'],
+					foreignKeys: []
+				},
+				{
+					schema: 'public',
+					name: 'customer_totals',
+					kind: 'materializedView',
+					rowCount: 3,
+					rowCountExact: true,
+					totalBytes: expect.any(Number),
+					columns: [
+						column('customer_id', 'integer', 23, { nullable: true }),
+						column('orders', 'bigint', 20, { nullable: true })
+					],
+					primaryKey: [],
+					foreignKeys: []
+				},
+				{
+					schema: 'public',
+					name: 'customers',
+					kind: 'table',
+					rowCount: 3,
+					rowCountExact: true,
+					totalBytes: expect.any(Number),
+					columns: [column('id', 'integer', 23, { hasDefault: true }), column('email', 'text', 25)],
+					primaryKey: ['id'],
+					foreignKeys: []
+				},
+				{
+					schema: 'public',
+					name: 'events',
+					kind: 'partitionedTable',
+					rowCount: 2,
+					rowCountExact: true,
+					totalBytes: expect.any(Number),
+					columns: [column('id', 'integer', 23), column('at', 'date', 1082)],
+					primaryKey: ['id', 'at'],
+					foreignKeys: []
+				},
+				{
+					schema: 'public',
+					name: 'order_items',
+					kind: 'table',
+					rowCount: 5,
+					rowCountExact: true,
+					totalBytes: expect.any(Number),
+					columns: [
+						column('order_id', 'bigint', 20),
+						column('position', 'integer', 23),
+						column('quantity', 'numeric(10,2)', 1700)
+					],
+					primaryKey: ['order_id', 'position'],
+					foreignKeys: [
+						{
+							name: 'order_items_order_id_fkey',
+							columns: ['order_id'],
+							referencedSchema: 'public',
+							referencedTable: 'orders',
+							referencedColumns: ['id']
+						}
+					]
+				},
+				{
+					schema: 'public',
+					name: 'orders',
+					kind: 'table',
+					rowCount: 4,
+					rowCountExact: true,
+					totalBytes: expect.any(Number),
+					columns: [
+						column('id', 'bigint', 20, { hasDefault: true }),
+						column('customer_id', 'integer', 23),
+						column('note', 'text', 25, { nullable: true }),
+						column('created_at', 'timestamp with time zone', 1184, { hasDefault: true })
+					],
+					primaryKey: ['id'],
+					foreignKeys: [
+						{
+							name: 'orders_customer_id_fkey',
+							columns: ['customer_id'],
+							referencedSchema: 'public',
+							referencedTable: 'customers',
+							referencedColumns: ['id']
+						}
+					]
+				},
+				{
+					schema: 'public',
+					name: 'readings',
+					kind: 'table',
+					rowCount: 200000,
+					rowCountExact: false,
+					totalBytes: expect.any(Number),
+					columns: [column('id', 'integer', 23), column('payload', 'text', 25)],
+					primaryKey: ['id'],
+					foreignKeys: []
+				},
+				{
+					schema: 'public',
+					name: 'recent_orders',
+					kind: 'view',
+					rowCount: null,
+					rowCountExact: false,
+					totalBytes: 0,
+					columns: [
+						column('id', 'bigint', 20, { nullable: true }),
+						column('customer_id', 'integer', 23, { nullable: true })
+					],
+					primaryKey: [],
+					foreignKeys: []
+				},
+				{
+					schema: 'public',
+					name: 'shipments',
+					kind: 'table',
+					rowCount: 2,
+					rowCountExact: true,
+					totalBytes: expect.any(Number),
+					columns: [
+						column('id', 'uuid', 2950, { hasDefault: true }),
+						column('order_id', 'bigint', 20, { nullable: true }),
+						column('position', 'integer', 23, { nullable: true })
+					],
+					primaryKey: ['id'],
+					foreignKeys: [
+						{
+							name: 'shipments_order_id_position_fkey',
+							columns: ['order_id', 'position'],
+							referencedSchema: 'public',
+							referencedTable: 'order_items',
+							referencedColumns: ['order_id', 'position']
+						}
+					]
+				}
+			]
+		});
+	});
+
+	it('reports database errors to the browser', async () => {
+		const closed = await freePort();
+		await startConnector({
+			DATABASE_URL: `postgres://postgres@127.0.0.1:${closed}/postgres`
+		}).waitFor('Connected to relay');
+		const { response, open } = await send({ type: 'overview' });
+		expect(response.status).toBe(200);
+		expect(await open()).toEqual({
+			type: 'error',
+			message: expect.stringContaining('error connecting to server')
+		});
 	});
 
 	it('returns encrypted errors for unknown requests', async () => {

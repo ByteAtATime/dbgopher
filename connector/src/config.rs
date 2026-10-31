@@ -5,6 +5,7 @@ pub struct Config {
     pub connector_id: String,
     pub token: String,
     pub connector_key: [u8; 32],
+    pub database: tokio_postgres::Config,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -13,6 +14,8 @@ pub enum Error {
     Missing(&'static str),
     #[error("CONNECTOR_KEY must be 64 hex characters")]
     InvalidKey,
+    #[error("DATABASE_URL is invalid")]
+    InvalidDatabaseUrl(#[source] tokio_postgres::Error),
 }
 
 impl Config {
@@ -26,6 +29,9 @@ impl Config {
             connector_id: var("CONNECTOR_ID")?,
             token: var("CONNECTOR_TOKEN")?,
             connector_key,
+            database: var("DATABASE_URL")?
+                .parse()
+                .map_err(Error::InvalidDatabaseUrl)?,
         })
     }
 }
