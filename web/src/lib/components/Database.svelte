@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { createConnection } from '#lib/connection.svelte.ts';
 	import { RelayError } from '#lib/protocol/client.ts';
+	import RowsTable from './RowsTable.svelte';
 	import TableList from './TableList.svelte';
 	import { Alert, AlertTitle, AlertDescription } from '#lib/components/ui/alert/index.ts';
 	import { Button } from '#lib/components/ui/button/index.ts';
@@ -14,6 +15,8 @@
 
 	const status = $derived(connection.status);
 	const overview = $derived(connection.overview);
+	const rows = $derived(connection.rows);
+	const first = $derived(overview.type === 'loaded' ? overview.overview.tables[0] : undefined);
 	const reason = $derived(
 		status.type === 'unavailable' && status.error instanceof RelayError
 			? status.error.reason
@@ -58,4 +61,26 @@
 			<TableList tables={overview.type === 'loaded' ? overview.overview.tables : undefined} />
 		{/if}
 	</section>
+
+	{#if first}
+		<section class="space-y-3">
+			<h2 class="font-semibold wrap-anywhere">
+				<span class="text-muted-foreground">{first.schema}.</span>{first.name}
+			</h2>
+			{#if rows.type === 'failed'}
+				<Alert variant="destructive">
+					<AlertDescription>
+						<pre class="font-mono text-xs whitespace-pre-wrap">{rows.error.message}</pre>
+					</AlertDescription>
+				</Alert>
+			{:else}
+				<RowsTable
+					columns={first.columns
+						.filter((column) => column.typeName !== 'bytea')
+						.map((column) => column.name)}
+					rows={rows.type === 'loaded' ? rows.rows : undefined}
+				/>
+			{/if}
+		</section>
+	{/if}
 </div>

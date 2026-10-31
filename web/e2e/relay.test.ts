@@ -223,7 +223,7 @@ describe('relay', () => {
 			type: 'hello',
 			protocolVersion: 1,
 			connectorVersion: '0.1.0',
-			capabilities: ['overview'],
+			capabilities: ['overview', 'browse'],
 			readOnly: true
 		});
 	});
@@ -384,6 +384,45 @@ describe('relay', () => {
 		});
 	});
 
+	it('browses rows with a default limit', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const { response, open } = await send({ type: 'browse', schema: 'public', table: 'readings' });
+		expect(response.status).toBe(200);
+		const opened = await open();
+		expect(opened).toMatchObject({
+			type: 'browse',
+			columns: [column('id', 'integer', 23), column('payload', 'text', 25)]
+		});
+		expect(opened).toHaveProperty('rows.length', 500);
+	});
+
+	it('browses rows with a limit and offset', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const { open } = await send({
+			type: 'browse',
+			schema: 'audit',
+			table: 'Event Log',
+			limit: 1,
+			offset: 0
+		});
+		const columns = [
+			column('id', 'integer', 23),
+			column('Payload', 'jsonb', 3802, { nullable: true })
+		];
+		expect(await open()).toEqual({
+			type: 'browse',
+			columns,
+			rows: [['1', '{"type": "signup"}']]
+		});
+		const { open: openEmpty } = await send({
+			type: 'browse',
+			schema: 'audit',
+			table: 'Event Log',
+			offset: 1
+		});
+		expect(await openEmpty()).toEqual({ type: 'browse', columns, rows: [] });
+	});
+
 	it('reports database errors to the browser', async () => {
 		const closed = await freePort();
 		await startConnector({
@@ -479,6 +518,27 @@ describe('browser client', () => {
 			'public.readings',
 			'public.recent_orders',
 			'public.shipments'
+		]);
+	});
+
+	it('browses rows', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const client = await browserClient();
+		const { columns, rows } = await client.browse({
+			schema: 'public',
+			table: 'orders',
+			limit: 2,
+			offset: 1
+		});
+		expect(columns.map((column) => [column.name, column.typeName])).toEqual([
+			['id', 'bigint'],
+			['customer_id', 'integer'],
+			['note', 'text'],
+			['created_at', 'timestamp with time zone']
+		]);
+		expect(rows).toEqual([
+			['2', '1', null, expect.any(String)],
+			['3', '2', null, expect.any(String)]
 		]);
 	});
 

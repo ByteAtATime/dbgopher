@@ -9,6 +9,8 @@ import { createChannel } from './channel';
 
 export type Hello = Extract<ConnectorResponse, { type: 'hello' }>;
 export type Overview = Extract<ConnectorResponse, { type: 'overview' }>;
+export type Browse = Extract<ConnectorResponse, { type: 'browse' }>;
+export type BrowseOptions = Omit<Extract<Request, { type: 'browse' }>, 'type'>;
 
 export type RelayErrorReason =
 	| 'unreachable'
@@ -47,7 +49,7 @@ export type ClientOptions = {
 	fetch?: Fetch;
 };
 
-const CAPABILITIES = ['overview'] as const satisfies readonly Capability[];
+const CAPABILITIES = ['overview', 'browse'] as const satisfies readonly Capability[];
 
 const isCapability = (value: string): value is Capability =>
 	CAPABILITIES.some((capability) => capability === value);
@@ -92,6 +94,12 @@ const overviewSchema = z.object({
 	type: z.literal('overview'),
 	tables: z.array(tableSchema)
 }) satisfies z.ZodType<Overview>;
+
+const browseSchema = z.object({
+	type: z.literal('browse'),
+	columns: z.array(columnSchema),
+	rows: z.array(z.array(z.string().nullable()))
+}) satisfies z.ZodType<Browse>;
 
 const errorSchema = z.object({
 	type: z.literal('error'),
@@ -171,7 +179,8 @@ export const createClient = async ({
 
 	return {
 		hello: () => call({ type: 'hello' }, helloSchema),
-		overview: () => call({ type: 'overview' }, overviewSchema)
+		overview: () => call({ type: 'overview' }, overviewSchema),
+		browse: (options: BrowseOptions) => call({ type: 'browse', ...options }, browseSchema)
 	};
 };
 

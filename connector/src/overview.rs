@@ -174,7 +174,7 @@ async fn count_rows(
     Ok(transaction.query_one(&query, &[]).await?.get(0))
 }
 
-fn quote_identifier(identifier: &str) -> String {
+pub fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 

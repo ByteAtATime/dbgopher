@@ -1,17 +1,32 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::browse::{self, Rows};
 use crate::database::Database;
 use crate::overview::{self, Overview};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
 #[derive(Debug, Deserialize, TS)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 #[ts(export)]
 pub enum Request {
     Hello,
     Overview,
+    Browse {
+        schema: String,
+        table: String,
+        #[serde(default)]
+        #[ts(optional)]
+        limit: Option<u32>,
+        #[serde(default)]
+        #[ts(optional)]
+        offset: Option<u32>,
+    },
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -29,6 +44,7 @@ pub enum Response {
         read_only: bool,
     },
     Overview(Overview),
+    Browse(Rows),
     Error {
         message: String,
     },
@@ -39,6 +55,7 @@ pub enum Response {
 #[ts(export)]
 pub enum Capability {
     Overview,
+    Browse,
 }
 
 pub async fn handle(database: &Database, request: Request) -> Response {
@@ -46,7 +63,7 @@ pub async fn handle(database: &Database, request: Request) -> Response {
         Request::Hello => Response::Hello {
             protocol_version: PROTOCOL_VERSION,
             connector_version: env!("CARGO_PKG_VERSION").into(),
-            capabilities: vec![Capability::Overview],
+            capabilities: vec![Capability::Overview, Capability::Browse],
             read_only: true,
         },
         Request::Overview => match database.read(overview::load).await {
@@ -55,5 +72,25 @@ pub async fn handle(database: &Database, request: Request) -> Response {
                 message: error.describe(),
             },
         },
+        Request::Browse {
+            schema,
+            table,
+            limit,
+            offset,
+        } => {
+            let limit = limit.unwrap_or(browse::DEFAULT_LIMIT);
+            let offset = offset.unwrap_or(0);
+            match database
+                .read(async |transaction| {
+                    browse::load(transaction, &schema, &table, limit, offset).await
+                })
+                .await
+            {
+                Ok(rows) => Response::Browse(rows),
+                Err(error) => Response::Error {
+                    message: error.describe(),
+                },
+            }
+        }
     }
 }
