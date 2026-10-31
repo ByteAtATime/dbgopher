@@ -4,11 +4,10 @@
 	import RowsTable from './RowsTable.svelte';
 	import TableList from './TableList.svelte';
 	import { Alert, AlertTitle, AlertDescription } from '#lib/components/ui/alert/index.ts';
-	import { Button } from '#lib/components/ui/button/index.ts';
 
-	type Props = { connectorId: string; connectorKey: Uint8Array; onforget: () => void };
+	type Props = { connectorId: string; connectorKey: Uint8Array };
 
-	let { connectorId, connectorKey, onforget }: Props = $props();
+	let { connectorId, connectorKey }: Props = $props();
 
 	const connection = $derived(createConnection(connectorId, connectorKey));
 	$effect(() => connection.start());
@@ -32,12 +31,6 @@
 				<AlertDescription>
 					Check that the connector is running and can reach the relay. This page checks again every
 					10 seconds.
-				</AlertDescription>
-			{:else if reason === 'undecryptable'}
-				<AlertDescription>
-					<Button variant="link" class="p-0 font-medium" onclick={onforget}>
-						Enter a different key
-					</Button>
 				</AlertDescription>
 			{/if}
 		</Alert>

@@ -5,7 +5,6 @@ import { auth } from '#lib/server/auth.ts';
 import { createConnector, listConnectors } from '#lib/server/connectors.ts';
 
 export const load = async ({ locals }) => ({
-	user: locals.user ? { name: locals.user.name, email: locals.user.email } : null,
 	connectors: locals.user ? await listConnectors(locals.user.id) : []
 });
 

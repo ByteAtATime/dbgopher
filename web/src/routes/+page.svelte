@@ -2,9 +2,11 @@
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import VaultGate from '#lib/components/VaultGate.svelte';
 	import { Button } from '#lib/components/ui/button/index.ts';
 	import { Input } from '#lib/components/ui/input/index.ts';
 	import { generateKey } from '#lib/keys.ts';
+	import { forgetVault, type VaultStore } from '#lib/vault.svelte.ts';
 	import type { PageProps, SubmitFunction } from './$types';
 
 	type Created = { id: string; token: string; key: string };
@@ -12,6 +14,7 @@
 	let { data }: PageProps = $props();
 
 	let created = $state<Created>();
+	let failure = $state<string>();
 
 	const relayUrl = $derived(
 		`${page.url.protocol === 'https:' ? 'wss:' : 'ws:'}//${page.url.host}/connector`
@@ -20,11 +23,20 @@
 	const command = (connector: Created) =>
 		`RELAY_URL=${relayUrl} CONNECTOR_ID=${connector.id} CONNECTOR_TOKEN=${connector.token} CONNECTOR_KEY=${connector.key} DATABASE_URL=<database url> cargo run --manifest-path connector/Cargo.toml`;
 
-	const create: SubmitFunction =
+	const create =
+		(vault: VaultStore): SubmitFunction =>
 		() =>
 		async ({ result, update }) => {
-			if (result.type === 'success' && result.data)
-				created = { ...result.data, key: generateKey() };
+			failure = undefined;
+			if (result.type === 'success' && result.data) {
+				const connector = { ...result.data, key: generateKey() };
+				try {
+					await vault.addConnectorKey(connector.id, connector.key);
+					created = connector;
+				} catch (error) {
+					failure = error instanceof Error ? error.message : String(error);
+				}
+			}
 			await update();
 		};
 </script>
@@ -36,15 +48,6 @@
 
 		<section class="space-y-3">
 			<h2 class="font-semibold">Connectors</h2>
-			{#if created}
-				<pre
-					class="overflow-x-auto rounded bg-muted p-3 font-mono text-xs break-all whitespace-pre-wrap">{command(
-						created
-					)}</pre>
-				<Button href={`${resolve('/c/[id]', { id: created.id })}#key=${created.key}`}>
-					Go to connector
-				</Button>
-			{/if}
 			{#if data.connectors.length > 0}
 				<ul class="divide-y rounded-md border">
 					{#each data.connectors as connector (connector.id)}
@@ -60,13 +63,32 @@
 					{/each}
 				</ul>
 			{/if}
-			<form method="POST" action="?/createConnector" use:enhance={create} class="flex gap-2">
-				<Input name="name" placeholder="Name" aria-label="Name" required />
-				<Button type="submit">New connector</Button>
-			</form>
+			<VaultGate userId={data.user.id}>
+				{#snippet children(vault)}
+					{#if created}
+						<pre
+							class="overflow-x-auto rounded bg-muted p-3 font-mono text-xs break-all whitespace-pre-wrap">{command(
+								created
+							)}</pre>
+						<Button href={resolve('/c/[id]', { id: created.id })}>Go to connector</Button>
+					{/if}
+					<form
+						method="POST"
+						action="?/createConnector"
+						use:enhance={create(vault)}
+						class="flex gap-2"
+					>
+						<Input name="name" placeholder="Name" aria-label="Name" required />
+						<Button type="submit">New connector</Button>
+					</form>
+					{#if failure}
+						<p class="text-sm text-red-600">{failure}</p>
+					{/if}
+				{/snippet}
+			</VaultGate>
 		</section>
 
-		<form method="POST" action="?/signOut">
+		<form method="POST" action="?/signOut" onsubmit={() => data.user && forgetVault(data.user.id)}>
 			<Button type="submit" variant="outline">Sign out</Button>
 		</form>
 	{:else}

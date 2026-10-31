@@ -11,6 +11,8 @@ import { connector, session, user } from '../src/lib/server/db/schema';
 import { createChannel } from '../src/lib/protocol/channel';
 import { ConnectorError, createClient, RelayError } from '../src/lib/protocol/client';
 import type { Column } from '../src/lib/protocol/bindings/Column';
+import { deriveWrappingKey } from '../src/lib/vault/argon2';
+import { createVault, unlockAccountKey } from '../src/lib/vault/crypto';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const TARGET_DATABASE = `dbgopher_e2e_${randomBytes(4).toString('hex')}`;
@@ -566,5 +568,60 @@ describe('browser client', () => {
 		const error = await (await browserClient()).overview().catch((error: unknown) => error);
 		expect(error).toBeInstanceOf(ConnectorError);
 		expect(error).toMatchObject({ message: expect.stringContaining('error connecting to server') });
+	});
+});
+
+describe('vault', () => {
+	const vaultRequest = (cookie: string, init: RequestInit = {}) =>
+		fetch(`http://127.0.0.1:${port}/v1/vault`, {
+			...init,
+			headers: { 'content-type': 'application/json', cookie }
+		});
+
+	const put = (cookie: string, body: unknown) =>
+		vaultRequest(cookie, { method: 'PUT', body: JSON.stringify(body) });
+
+	it('requires a signed-in user', async () => {
+		expect((await vaultRequest('')).status).toBe(401);
+		expect((await put('', {})).status).toBe(401);
+	});
+
+	it('stores a vault the browser can unlock', async () => {
+		const { userId, cookie } = await signIn(drizzle(client));
+		expect((await vaultRequest(cookie)).status).toBe(404);
+
+		const { accountKey, record } = await createVault(userId, 'unlock me', deriveWrappingKey);
+		const created = await put(cookie, { ...record, revision: 0 });
+		expect(created.status).toBe(200);
+		expect(await created.json()).toEqual({ revision: 1 });
+
+		const stored = await vaultRequest(cookie);
+		expect(stored.status).toBe(200);
+		const body = await stored.json();
+		expect(body).toEqual({ ...record, revision: 1 });
+		expect(await unlockAccountKey(userId, body, 'unlock me', deriveWrappingKey)).toEqual(
+			accountKey
+		);
+	});
+
+	it('rejects stale revisions', async () => {
+		const { userId, cookie } = await signIn(drizzle(client));
+		const { record } = await createVault(userId, 'unlock me', deriveWrappingKey);
+		expect((await put(cookie, { ...record, revision: 0 })).status).toBe(200);
+		expect((await put(cookie, { ...record, revision: 0 })).status).toBe(409);
+		expect(await (await put(cookie, { ...record, revision: 1 })).json()).toEqual({ revision: 2 });
+		expect((await put(cookie, { ...record, revision: 1 })).status).toBe(409);
+	});
+
+	it('rejects malformed vaults', async () => {
+		const { cookie } = await signIn(drizzle(client));
+		expect((await put(cookie, { revision: 0, salt: 'not base64!' })).status).toBe(400);
+	});
+
+	it("hides each user's vault from other users", async () => {
+		const owner = await signIn(drizzle(client));
+		const { record } = await createVault(owner.userId, 'unlock me', deriveWrappingKey);
+		expect((await put(owner.cookie, { ...record, revision: 0 })).status).toBe(200);
+		expect((await vaultRequest(strangerCookie)).status).toBe(404);
 	});
 });
