@@ -54,7 +54,7 @@
 	const init = (grid: IApi) => {
 		api = grid;
 		grid.intercept('sort-rows', ({ key }) => {
-			toggle(headers[Number(key)]);
+			toggle(headers[Number(key) - 1]);
 			return false;
 		});
 		grid.on('resize-column', ({ id, width }) => {

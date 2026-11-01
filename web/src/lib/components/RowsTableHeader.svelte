@@ -18,7 +18,7 @@
 	const sort = getSort();
 	const columns = getColumns();
 
-	const type = $derived(columns()[Number(column.id)]?.typeName);
+	const type = $derived(columns()[Number(column.id) - 1]?.typeName);
 
 	const direction = $derived(sort()?.column === cell.text ? sort()?.direction : undefined);
 </script>
