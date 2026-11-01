@@ -1,5 +1,12 @@
 <script lang="ts">
-	import { Grid, Willow, type IApi, type IColumnConfig } from '@svar-ui/svelte-grid';
+	import {
+		Grid,
+		Willow,
+		type IApi,
+		type IColumn,
+		type IColumnConfig,
+		type IRow
+	} from '@svar-ui/svelte-grid';
 	import BugIcon from '@lucide/svelte/icons/bug';
 	import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
 	import type { Column } from '#lib/protocol/bindings/Column.ts';
@@ -18,6 +25,8 @@
 
 	const COLUMN_WIDTH = 250;
 	const SKELETON_ROWS = 8;
+
+	type CellPosition = { row: number; column: number };
 
 	let { columns, rows, sort, loading = false, onsort }: Props = $props();
 
@@ -50,6 +59,9 @@
 		);
 
 	let api: IApi | undefined;
+	let anchor = $state.raw<CellPosition>();
+	let head = $state.raw<CellPosition>();
+	let dragging = false;
 
 	const init = (grid: IApi) => {
 		api = grid;
@@ -57,22 +69,74 @@
 			toggle(headers[Number(key) - 1]);
 			return false;
 		});
+		grid.on('focus-cell', ({ row, column }) => {
+			anchor = head =
+				row === undefined || column === undefined
+					? undefined
+					: { row: Number(row), column: Number(column) };
+		});
 		grid.on('resize-column', ({ id, width }) => {
 			if (width !== undefined) widths.set(headers[Number(id)], width);
 		});
 	};
 
-	const focus = (event: MouseEvent) => {
+	const locate = (event: MouseEvent): CellPosition | undefined => {
 		const cell =
 			event.target instanceof Element
 				? event.target.closest<HTMLElement>('.wx-body .wx-cell')
 				: null;
+		return cell
+			? { row: Number(cell.dataset.rowId), column: Number(cell.dataset.colId) }
+			: undefined;
+	};
+
+	const press = (event: MouseEvent) => {
+		const cell = locate(event);
 		if (!cell) return;
-		api?.exec('focus-cell', {
-			row: Number(cell.dataset.rowId),
-			column: Number(cell.dataset.colId),
-			eventSource: 'click'
-		});
+		dragging = true;
+		if (event.shiftKey && anchor) {
+			event.preventDefault();
+			head = cell;
+		} else {
+			api?.exec('focus-cell', { ...cell, eventSource: 'click' });
+		}
+	};
+
+	const extend = (event: MouseEvent) => {
+		if (dragging && anchor) head = locate(event) ?? head;
+	};
+
+	const blockGridClick = (event: MouseEvent) => {
+		if (event.target instanceof Element && event.target.closest('.wx-body')) {
+			event.stopPropagation();
+		}
+	};
+
+	const bounds = $derived(
+		anchor &&
+			head && {
+				top: Math.min(anchor.row, head.row),
+				bottom: Math.max(anchor.row, head.row),
+				left: Math.min(anchor.column, head.column),
+				right: Math.max(anchor.column, head.column)
+			}
+	);
+
+	const cellStyle = (row: IRow, column: IColumn) => {
+		const r = Number(row.id);
+		const c = Number(column.id);
+		if (!bounds || r < bounds.top || r > bounds.bottom || c < bounds.left || c > bounds.right) {
+			return '';
+		}
+		return [
+			'selected',
+			r === bounds.top && 'selected-top',
+			r === bounds.bottom && 'selected-bottom',
+			c === bounds.left && 'selected-left',
+			c === bounds.right && 'selected-right'
+		]
+			.filter(Boolean)
+			.join(' ');
 	};
 
 	const data = $derived(
@@ -80,18 +144,23 @@
 	);
 </script>
 
+<svelte:window onmouseup={() => (dragging = false)} />
+
 <div
 	class={[
 		'rows-grid relative h-full',
 		!rows && '[&_.wx-body]:animate-pulse [&_.wx-body]:mask-b-from-0%'
 	]}
-	onmousedown={focus}
+	onmousedown={press}
+	onpointerover={extend}
+	onclickcapture={blockGridClick}
 >
 	<Willow fonts={false}>
 		<Grid
 			{data}
 			columns={gridColumns}
 			select={false}
+			{cellStyle}
 			{init}
 			sizes={{ rowHeight: 33, headerHeight: 40, columnWidth: COLUMN_WIDTH }}
 		/>
@@ -156,6 +225,17 @@
 	.rows-grid :global(.wx-body .wx-cell) {
 		font-family: var(--font-mono);
 		user-select: none;
+		overflow: visible;
+	}
+
+	.rows-grid :global(.wx-body .wx-cell > *) {
+		display: block;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.rows-grid :global(.wx-body .wx-cell:focus) {
+		outline: none;
 	}
 
 	.rows-grid :global(.wx-body .wx-row:has(+ .wx-row:hover)) {
@@ -168,6 +248,44 @@
 		:global(.wx-cell) {
 			background: var(--muted);
 		}
+	}
+
+	.rows-grid :global(.wx-body .wx-row .wx-cell.selected) {
+		position: relative;
+		/* TODO: probably a bad idea? */
+		background: color-mix(var(--primary-soft), var(--background) 50%);
+	}
+
+	.rows-grid :global(.wx-body .wx-cell.selected::after) {
+		content: '';
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		border: 0 solid var(--wx-color-primary);
+	}
+
+	.rows-grid :global(.wx-body .wx-cell.selected:not(.selected-bottom)::after) {
+		bottom: -1px;
+	}
+
+	.rows-grid :global(.wx-body .wx-cell.selected:not(.selected-right)::after) {
+		right: -1px;
+	}
+
+	.rows-grid :global(.wx-body .wx-cell.selected-top::after) {
+		border-top-width: 1px;
+	}
+
+	.rows-grid :global(.wx-body .wx-cell.selected-bottom::after) {
+		border-bottom-width: 1px;
+	}
+
+	.rows-grid :global(.wx-body .wx-cell.selected-left::after) {
+		border-left-width: 1px;
+	}
+
+	.rows-grid :global(.wx-body .wx-cell.selected-right::after) {
+		border-right-width: 1px;
 	}
 
 	.rows-grid :global(.wx-cell:first-child) {
