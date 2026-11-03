@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -498,6 +499,37 @@ describe('relay', () => {
 		const connector = startConnector({ CONNECTOR_ID: randomUUID() });
 		expect(await exitCode(connector.child)).toBe(1);
 		expect(connector.output()).toContain('REASON_UNAUTHORIZED');
+	});
+
+	it('records when connectors were last seen', async () => {
+		const db = drizzle(client);
+		const seen = async () => {
+			const [row] = await db
+				.select({ lastSeenAt: connector.lastSeenAt, connectorVersion: connector.connectorVersion })
+				.from(connector)
+				.where(eq(connector.id, credentials.id));
+			return row;
+		};
+		const until = async (predicate: (row: Awaited<ReturnType<typeof seen>>) => boolean) => {
+			for (;;) {
+				const row = await seen();
+				if (predicate(row)) return row;
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+		};
+		await db
+			.update(connector)
+			.set({ lastSeenAt: null, connectorVersion: null })
+			.where(eq(connector.id, credentials.id));
+		const process = startConnector();
+		await process.waitFor('Connected to relay');
+		const connected = await until((row) => row.lastSeenAt !== null);
+		expect(connected.connectorVersion).toBe('0.1.0');
+		process.child.kill();
+		const disconnected = await until(
+			(row) => (row.lastSeenAt?.getTime() ?? 0) > (connected.lastSeenAt?.getTime() ?? 0)
+		);
+		expect(disconnected.connectorVersion).toBe('0.1.0');
 	});
 
 	it('replaces older connections with the same ID', async () => {

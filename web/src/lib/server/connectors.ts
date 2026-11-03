@@ -28,7 +28,12 @@ export const ownsConnector = async (userId: string, id: string) => {
 
 export const listConnectors = (userId: string) =>
 	db
-		.select({ id: connector.id, name: connector.name, createdAt: connector.createdAt })
+		.select({
+			id: connector.id,
+			name: connector.name,
+			lastSeenAt: connector.lastSeenAt,
+			createdAt: connector.createdAt
+		})
 		.from(connector)
 		.where(eq(connector.userId, userId))
 		.orderBy(desc(connector.createdAt));
@@ -40,4 +45,11 @@ export const createConnector = async (userId: string, name: string) => {
 		.values({ userId, name, tokenHash: hashToken(token) })
 		.returning({ id: connector.id });
 	return { id, token };
+};
+
+export const markConnectorSeen = async (id: string, connectorVersion?: string) => {
+	await db
+		.update(connector)
+		.set({ lastSeenAt: new Date(), connectorVersion })
+		.where(eq(connector.id, id));
 };

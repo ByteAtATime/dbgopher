@@ -56,7 +56,17 @@
 								href={resolve('/c/[id]', { id: connector.id })}
 								class="flex justify-between gap-4 p-3 text-sm hover:bg-muted"
 							>
-								<span>{connector.name}</span>
+								<span>
+									{connector.name}
+
+									({#if connector.online}
+										Online
+									{:else if connector.lastSeenAt}
+										Offline; last seen {connector.lastSeenAt.toLocaleString()}
+									{:else}
+										Offline
+									{/if})
+								</span>
 								<span class="text-muted-foreground">{connector.createdAt.toLocaleString()}</span>
 							</a>
 						</li>

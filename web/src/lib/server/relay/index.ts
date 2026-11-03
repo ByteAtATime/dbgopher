@@ -2,7 +2,7 @@ import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
-import { verifyConnector } from '../connectors';
+import { markConnectorSeen, verifyConnector } from '../connectors';
 import {
 	Close_Reason,
 	CloseSchema,
@@ -20,6 +20,7 @@ const SUPPORTED_PROTOCOL_VERSIONS = new Set([1]);
 const HELLO_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const PING_INTERVAL_MS = 25_000;
+const SEEN_INTERVAL_MS = 5 * 60_000;
 const MAX_FRAME_SIZE = 1024 * 1024;
 export const MAX_SEALED_SIZE = MAX_FRAME_SIZE - 1024;
 
@@ -63,7 +64,10 @@ const createRelay = () => {
 	const connections = new Map<string, Connection>();
 	let nextRequestId = 0n;
 
-	const register = (connectorId: string, socket: WebSocket) => {
+	const markSeen = (connectorId: string, connectorVersion?: string) =>
+		markConnectorSeen(connectorId, connectorVersion).catch(console.error);
+
+	const register = (connectorId: string, connectorVersion: string, socket: WebSocket) => {
 		const previous = connections.get(connectorId);
 		if (previous) {
 			close(previous.socket, Close_Reason.REPLACED, 'Another connector connected with this ID.');
@@ -71,6 +75,8 @@ const createRelay = () => {
 		const connection: Connection = { socket, pending: new Map() };
 		connections.set(connectorId, connection);
 		send(socket, { case: 'welcome', value: create(WelcomeSchema) });
+		markSeen(connectorId, connectorVersion);
+		const seen = setInterval(() => markSeen(connectorId), SEEN_INTERVAL_MS);
 
 		let alive = true;
 		const pinger = setInterval(() => {
@@ -89,6 +95,8 @@ const createRelay = () => {
 
 		socket.on('close', () => {
 			clearInterval(pinger);
+			clearInterval(seen);
+			markSeen(connectorId);
 			if (connections.get(connectorId) === connection) connections.delete(connectorId);
 			for (const resolve of connection.pending.values()) resolve({ status: 'offline' });
 		});
@@ -100,7 +108,7 @@ const createRelay = () => {
 			clearTimeout(timer);
 			const message = decode(data);
 			if (message?.case !== 'hello') return socket.terminate();
-			const { protocolVersion, connectorId, token } = message.value;
+			const { protocolVersion, connectorVersion, connectorId, token } = message.value;
 			if (!SUPPORTED_PROTOCOL_VERSIONS.has(protocolVersion)) {
 				return close(
 					socket,
@@ -112,7 +120,7 @@ const createRelay = () => {
 			if (verified === undefined) return socket.terminate();
 			if (!verified)
 				return close(socket, Close_Reason.UNAUTHORIZED, 'Unknown connector ID or token.');
-			register(connectorId, socket);
+			register(connectorId, connectorVersion, socket);
 		});
 	};
 
@@ -140,7 +148,9 @@ const createRelay = () => {
 			});
 		});
 
-	return { handleUpgrade, rpc };
+	const isOnline = (connectorId: string) => connections.has(connectorId);
+
+	return { handleUpgrade, rpc, isOnline };
 };
 
 export type Relay = ReturnType<typeof createRelay>;

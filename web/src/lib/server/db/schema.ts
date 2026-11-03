@@ -9,6 +9,8 @@ export const connector = pgTable('connector', {
 		.references(() => user.id, { onDelete: 'cascade' }),
 	name: text('name').notNull(),
 	tokenHash: text('token_hash').notNull(),
+	connectorVersion: text('connector_version'),
+	lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 });
 
