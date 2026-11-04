@@ -458,6 +458,40 @@ describe('relay', () => {
 		});
 	});
 
+	it('browses rows matching every filter', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const { open } = await send({
+			type: 'browse',
+			schema: 'public',
+			table: 'order_items',
+			filter: [
+				{ column: 'order_id', value: '1' },
+				{ column: 'position', value: '2' }
+			]
+		});
+		expect(await open()).toMatchObject({ type: 'browse', rows: [['1', '2', '2.50']] });
+		const { open: openOrders } = await send({
+			type: 'browse',
+			schema: 'public',
+			table: 'orders',
+			sort: { column: 'id', direction: 'desc' },
+			filter: [{ column: 'customer_id', value: '1' }]
+		});
+		const orders = await openOrders();
+		expect(orders).toHaveProperty('rows.length', 2);
+		expect(orders).toHaveProperty('rows.0.0', '2');
+		const { open: openMissing } = await send({
+			type: 'browse',
+			schema: 'public',
+			table: 'orders',
+			filter: [{ column: 'missing', value: '1' }]
+		});
+		expect(await openMissing()).toMatchObject({
+			type: 'error',
+			message: expect.stringContaining('missing')
+		});
+	});
+
 	it('reports database errors to the browser', async () => {
 		const closed = await freePort();
 		await startConnector({

@@ -30,6 +30,14 @@ pub enum Direction {
     Desc,
 }
 
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Filter {
+    pub column: String,
+    pub value: String,
+}
+
 pub const DEFAULT_LIMIT: u32 = 500;
 
 const COLUMNS: &str = "
@@ -51,6 +59,7 @@ pub async fn load(
     limit: u32,
     offset: u32,
     sort: Option<&Sort>,
+    filters: &[Filter],
 ) -> Result<Rows, tokio_postgres::Error> {
     let names: [&(dyn ToSql + Sync); 2] = [&schema, &table];
     let columns: Vec<Column> = transaction
@@ -81,17 +90,44 @@ pub async fn load(
             )
         })
         .unwrap_or_default();
+    let conditions = filters
+        .iter()
+        .enumerate()
+        .map(|(index, filter)| {
+            let type_name = columns
+                .iter()
+                .find(|column| column.name == filter.column)
+                .map_or("text", |column| &column.type_name);
+            format!(
+                "source.{} = ${}::text::{type_name}",
+                quote_identifier(&filter.column),
+                index + 3
+            )
+        })
+        .collect::<Vec<_>>();
+    let filter = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
     let query = format!(
         "SELECT array(
             SELECT value FROM json_each_text(row_to_json(t)) WITH ORDINALITY ORDER BY ordinality
         ) AS values
-        FROM (SELECT {projection} FROM {}.{} source {order} LIMIT $1 OFFSET $2) t",
+        FROM (SELECT {projection} FROM {}.{} source {filter} {order} LIMIT $1 OFFSET $2) t",
         quote_identifier(schema),
         quote_identifier(table)
     );
     let (limit, offset) = (i64::from(limit), i64::from(offset));
-    let page: [&(dyn ToSql + Sync); 2] = [&limit, &offset];
-    let rows = transaction.query(&query, &page).await?;
+    let params: Vec<&(dyn ToSql + Sync)> = [&limit as &(dyn ToSql + Sync), &offset]
+        .into_iter()
+        .chain(
+            filters
+                .iter()
+                .map(|filter| &filter.value as &(dyn ToSql + Sync)),
+        )
+        .collect();
+    let rows = transaction.query(&query, &params).await?;
     Ok(Rows {
         columns,
         rows: rows
