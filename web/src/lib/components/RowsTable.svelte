@@ -241,10 +241,15 @@
 		--wx-table-fixed-column-border: 1px solid var(--border);
 	}
 
-	.rows-grid :global(.wx-table-box) {
+	.rows-grid :global(.wx-grid .wx-table-box) {
 		box-sizing: border-box;
 		width: 100% !important;
 		border-left: none;
+		border-bottom: none;
+	}
+
+	.rows-grid :global(.wx-body .wx-row:last-child) {
+		border-bottom: var(--wx-table-cell-border);
 	}
 
 	.rows-grid :global(.wx-scroll) {
