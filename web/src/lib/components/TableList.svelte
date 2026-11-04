@@ -31,7 +31,7 @@
 						active && 'bg-accent font-medium'
 					)}
 					aria-current={active ? 'page' : undefined}
-					href={`#${formatRoute({ type: 'browse', schema: table.schema, table: table.name })}`}
+					href={`#${formatRoute({ type: 'browse', schema: table.schema, table: table.name, filter: [] })}`}
 				>
 					{#if showIcons}
 						<Icon class="size-4 shrink-0 text-muted-foreground" />

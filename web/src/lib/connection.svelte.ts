@@ -1,3 +1,4 @@
+import { browseKey, createBrowseCache, type BrowseResult } from './browse-cache.ts';
 import {
 	createClient,
 	type Browse,
@@ -8,6 +9,8 @@ import {
 } from './protocol/client.ts';
 
 const POLL_INTERVAL_MS = 10_000;
+const CACHE_TTL_MS = 5 * 60_000;
+const REVALIDATE_AFTER_MS = POLL_INTERVAL_MS;
 
 export type Status =
 	{ type: 'connecting' } | { type: 'online'; hello: Hello } | { type: 'unavailable'; error: Error };
@@ -38,7 +41,7 @@ const load = async (client: Client): Promise<OverviewState> => {
 	}
 };
 
-const browse = async (client: Client, options: BrowseOptions): Promise<RowsState> => {
+const browse = async (client: Client, options: BrowseOptions): Promise<BrowseResult> => {
 	try {
 		return { type: 'loaded', rows: await client.browse(options) };
 	} catch (error) {
@@ -51,44 +54,56 @@ export const createConnection = (connectorId: string, connectorKey: Uint8Array) 
 	let overview = $state<OverviewState>({ type: 'loading' });
 	let rows = $state<RowsState>({ type: 'loading' });
 	let target: BrowseOptions | undefined;
-	let browsing: BrowseOptions | undefined;
+	let validated: string | undefined;
 	const client = createClient({ connectorId, connectorKey });
+	const cache = createBrowseCache({
+		load: (options) => browse(client, options),
+		ttl: CACHE_TTL_MS
+	});
 	let stopped = false;
 
 	const refresh = async () => {
 		const current = target;
-		if (!current || browsing === current) return;
-		if (status.type !== 'online' || rows.type === 'loaded') return;
-		browsing = current;
-		const browsed = await browse(client, current);
-		if (browsing === current) browsing = undefined;
+		if (!current || status.type !== 'online') return;
+		const key = browseKey(current);
+		if (rows.type === 'loaded' && validated === key) return;
+		const result = await cache.fetch(current);
 		if (stopped || target !== current) return;
-		rows = browsed;
+		validated = key;
+		if (
+			result.type === 'loaded' &&
+			rows.type === 'loaded' &&
+			JSON.stringify(result.rows) === JSON.stringify(rows.rows)
+		)
+			return;
+		rows = result;
 	};
 
 	const select = (next: BrowseOptions | undefined) => {
-		if (
-			target?.schema === next?.schema &&
-			target?.table === next?.table &&
-			target?.limit === next?.limit &&
-			target?.offset === next?.offset &&
-			target?.sort?.column === next?.sort?.column &&
-			target?.sort?.direction === next?.sort?.direction
-		)
-			return;
+		if ((target && browseKey(target)) === (next && browseKey(next))) return;
 		const sameTable = target?.schema === next?.schema && target?.table === next?.table;
 		target = next;
-		rows = {
-			type: 'loading',
-			previous: !sameTable
-				? undefined
-				: rows.type === 'loaded'
-					? rows.rows
-					: rows.type === 'loading'
-						? rows.previous
-						: undefined
-		};
+		const hit = next && cache.get(next);
+		validated =
+			next && hit && Date.now() - hit.at < REVALIDATE_AFTER_MS ? browseKey(next) : undefined;
+		rows = hit
+			? { type: 'loaded', rows: hit.rows }
+			: {
+					type: 'loading',
+					previous: !sameTable
+						? undefined
+						: rows.type === 'loaded'
+							? rows.rows
+							: rows.type === 'loading'
+								? rows.previous
+								: undefined
+				};
 		void refresh();
+	};
+
+	const prefetch = (options: BrowseOptions) => {
+		if (status.type !== 'online' || cache.get(options)) return;
+		void cache.fetch(options);
 	};
 
 	const start = () => {
@@ -127,6 +142,7 @@ export const createConnection = (connectorId: string, connectorKey: Uint8Array) 
 			return rows;
 		},
 		select,
+		prefetch,
 		start
 	};
 };

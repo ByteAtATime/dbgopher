@@ -3,7 +3,9 @@
 	import { createConnection } from '#lib/connection.svelte.ts';
 	import type { Sort } from '#lib/protocol/bindings/Sort.ts';
 	import { RelayError } from '#lib/protocol/client.ts';
-	import { parseRoute } from '#lib/route.ts';
+	import { incomingReferences } from '#lib/references.ts';
+	import { formatRoute, parseRoute } from '#lib/route.ts';
+	import XIcon from '@lucide/svelte/icons/x';
 	import Pagination from './Pagination.svelte';
 	import RowsTable from './RowsTable.svelte';
 	import TableList from './TableList.svelte';
@@ -23,7 +25,9 @@
 	const rows = $derived(connection.rows);
 	const route = $derived(parseRoute(page.url.hash.slice(1)));
 	const table = $derived(
-		route.type === 'browse' ? { schema: route.schema, table: route.table } : undefined
+		route.type === 'browse'
+			? { schema: route.schema, table: route.table, filter: route.filter }
+			: undefined
 	);
 	let sort = $derived.by<Sort | undefined>(() => {
 		void table;
@@ -44,6 +48,14 @@
 			: undefined
 	);
 	const columns = $derived(info?.columns ?? []);
+	const references = $derived(
+		overview.type === 'loaded' && target
+			? incomingReferences(overview.overview.tables, target.schema, target.table)
+			: []
+	);
+	const count = $derived(rows.type === 'loaded' ? rows.rows.rows.length : undefined);
+	const filtered = $derived((target?.filter.length ?? 0) > 0);
+	const filteredTotal = $derived(count !== undefined && count < PAGE_SIZE ? offset + count : null);
 	const reason = $derived(
 		status.type === 'unavailable' && status.error instanceof RelayError
 			? status.error.reason
@@ -92,15 +104,36 @@
 
 		{#if target}
 			<div class="flex items-center justify-between gap-4 border-l px-2 py-1">
-				<h2 class="min-w-0 truncate font-semibold">
-					<span class="text-muted-foreground">{target.schema}.</span>{target.table}
-				</h2>
+				<div class="flex min-w-0 items-center gap-2">
+					<h2 class="min-w-0 shrink-0 truncate font-semibold">
+						<span class="text-muted-foreground">{target.schema}.</span>{target.table}
+					</h2>
+					{#if filtered}
+						<span
+							class="flex min-w-0 items-center gap-1 rounded-md border bg-muted py-0.5 pr-0.5 pl-2 font-mono text-xs"
+						>
+							<span class="truncate">
+								<span class="text-muted-foreground">where</span>
+								{#each target.filter as { column, value }, index (index)}
+									{#if index > 0}<span class="text-muted-foreground">&#32;and&#32;</span>{/if}
+									{column} = <span title={value}>{value}</span>
+								{/each}
+							</span>
+							<a
+								class="shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+								href={`#${formatRoute({ type: 'browse', schema: target.schema, table: target.table, filter: [] })}`}
+							>
+								<XIcon class="size-3.5" />
+							</a>
+						</span>
+					{/if}
+				</div>
 				<Pagination
 					{offset}
 					limit={PAGE_SIZE}
-					count={rows.type === 'loaded' ? rows.rows.rows.length : undefined}
-					total={info?.rowCount ?? null}
-					totalExact={info?.rowCountExact ?? false}
+					{count}
+					total={filtered ? filteredTotal : (info?.rowCount ?? null)}
+					totalExact={filtered || (info?.rowCountExact ?? false)}
 					onchange={(next) => (offset = next)}
 				/>
 			</div>
@@ -123,7 +156,17 @@
 								: undefined}
 						loading={rows.type === 'loading'}
 						{sort}
+						{references}
 						onsort={(next) => (sort = next)}
+						onprefetch={(reference, filter) =>
+							connection.prefetch({
+								schema: reference.schema,
+								table: reference.table,
+								filter,
+								limit: PAGE_SIZE,
+								offset: 0,
+								sort: undefined
+							})}
 					/>
 				</div>
 			{/if}

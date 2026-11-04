@@ -10,25 +10,40 @@
 	import BugIcon from '@lucide/svelte/icons/bug';
 	import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
 	import type { Column } from '#lib/protocol/bindings/Column.ts';
+	import type { Filter } from '#lib/protocol/bindings/Filter.ts';
 	import type { Sort } from '#lib/protocol/bindings/Sort.ts';
 	import type { Browse } from '#lib/protocol/client.ts';
+	import type { Reference } from '#lib/references.ts';
 	import RowsTableCell, { setRows } from './RowsTableCell.svelte';
 	import RowsTableHeader, { setColumns, setSort } from './RowsTableHeader.svelte';
+	import RowsTableReference, { setReferenceLinks } from './RowsTableReference.svelte';
+	import RowsTableReferenceHeader from './RowsTableReferenceHeader.svelte';
 
 	type Props = {
 		columns: Column[];
 		rows?: Browse;
 		sort?: Sort;
 		loading?: boolean;
+		references?: Reference[];
 		onsort: (sort: Sort | undefined) => void;
+		onprefetch: (reference: Reference, filter: Filter[]) => void;
 	};
 
 	const COLUMN_WIDTH = 250;
+	const REFERENCE_WIDTH = 160;
 	const SKELETON_ROWS = 8;
 
 	type CellPosition = { row: number; column: number };
 
-	let { columns, rows, sort, loading = false, onsort }: Props = $props();
+	let {
+		columns,
+		rows,
+		sort,
+		loading = false,
+		references = [],
+		onsort,
+		onprefetch
+	}: Props = $props();
 
 	setRows(() => rows);
 	setSort(() => sort);
@@ -36,18 +51,32 @@
 
 	const headers = $derived((rows?.columns ?? columns).map((column) => column.name));
 
-	const widths = new Map<string, number>();
+	setReferenceLinks({
+		references: () => references,
+		columns: () => headers.length,
+		onprefetch: (reference, filter) => onprefetch(reference, filter)
+	});
 
-	const gridColumns = $derived<IColumnConfig[]>(
-		headers.map((header, index) => ({
+	const widths = new Map<string, number>();
+	const referenceWidthKey = (reference: Reference) => `\0${reference.label}`;
+
+	const gridColumns = $derived<IColumnConfig[]>([
+		...headers.map((header, index) => ({
 			id: index + 1,
 			header: { text: header, cell: RowsTableHeader },
 			width: widths.get(header) ?? COLUMN_WIDTH,
 			resize: true,
 			sort: true,
 			cell: RowsTableCell
+		})),
+		...references.map((reference, index) => ({
+			id: headers.length + index + 1,
+			header: { text: reference.label, cell: RowsTableReferenceHeader },
+			width: widths.get(referenceWidthKey(reference)) ?? REFERENCE_WIDTH,
+			resize: true,
+			cell: RowsTableReference
 		}))
-	);
+	]);
 
 	const toggle = (column: string) =>
 		onsort(
@@ -76,7 +105,10 @@
 					: { row: Number(row), column: Number(column) };
 		});
 		grid.on('resize-column', ({ id, width }) => {
-			if (width !== undefined) widths.set(headers[Number(id)], width);
+			if (width === undefined) return;
+			const index = Number(id) - 1;
+			const reference = references[index - headers.length];
+			widths.set(reference ? referenceWidthKey(reference) : headers[index], width);
 		});
 	};
 
@@ -91,6 +123,7 @@
 	};
 
 	const press = (event: MouseEvent) => {
+		if (followsLink(event)) return;
 		const cell = locate(event);
 		if (!cell) return;
 		dragging = true;
@@ -106,10 +139,16 @@
 		if (dragging && anchor) head = locate(event) ?? head;
 	};
 
+	const followsLink = (event: MouseEvent) =>
+		event.target instanceof Element &&
+		event.target.closest('a') !== null &&
+		!(event.shiftKey && anchor);
+
 	const blockGridClick = (event: MouseEvent) => {
-		if (event.target instanceof Element && event.target.closest('.wx-body')) {
-			event.stopPropagation();
-		}
+		if (!(event.target instanceof Element) || !event.target.closest('.wx-body')) return;
+		if (followsLink(event)) return;
+		event.stopPropagation();
+		if (event.target.closest('a')) event.preventDefault();
 	};
 
 	const bounds = $derived(
