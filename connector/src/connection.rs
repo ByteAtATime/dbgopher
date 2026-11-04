@@ -10,12 +10,11 @@ use tokio::time::{sleep, timeout};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async_with_config};
-use uuid::Uuid;
 
 use crate::RELAY_PROTOCOL_VERSION;
 use crate::config::Config;
 use crate::database::Database;
-use crate::envelope::{self, Channel};
+use crate::envelope::{self, Channels, Opened, Responder};
 use crate::messages::{self, Request, Response};
 use crate::relay::{
     self, Close, ConnectorMessage, Hello, Rejection, RelayMessage, connector_message, rejection,
@@ -77,13 +76,13 @@ impl Default for Backoff {
 
 struct Session {
     socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
-    channel: Channel,
+    channels: Channels,
     database: Arc<Database>,
 }
 
 struct Handled {
     request_id: u64,
-    envelope_id: Uuid,
+    responder: Responder,
     response: Response,
 }
 
@@ -99,7 +98,7 @@ impl Session {
             connect_async_with_config(&config.relay_url, Some(websocket_config), false).await?;
         let mut session = Self {
             socket,
-            channel: Channel::new(&config.connector_key, config.connector_id.as_str()),
+            channels: Channels::new(config.connector_key, config.connector_id.as_str()),
             database,
         };
         session
@@ -133,8 +132,8 @@ impl Session {
                         None => {}
                     }
                 }
-                Some(Handled { request_id, envelope_id, response }) = handled_rx.recv() => {
-                    let sealed = self.channel.seal_response(envelope_id, &response)?;
+                Some(Handled { request_id, responder, response }) = handled_rx.recv() => {
+                    let sealed = responder.seal(&response)?;
                     self.respond(request_id, response::Result::Sealed(sealed)).await?;
                 }
             }
@@ -146,8 +145,16 @@ impl Session {
         request: relay::Request,
         handled_tx: &mpsc::UnboundedSender<Handled>,
     ) -> Result<(), Error> {
-        let envelope = match self.channel.open_request::<Value>(&request.sealed) {
-            Ok(envelope) => envelope,
+        let (envelope, responder) = match self
+            .channels
+            .open::<Value>(&request.session_id, &request.sealed)
+        {
+            Ok(Opened::Request(envelope, responder)) => (envelope, responder),
+            Ok(Opened::Handshake(public)) => {
+                return self
+                    .respond(request.id, response::Result::Sealed(public))
+                    .await;
+            }
             Err(error) => {
                 let rejection = response::Result::Rejection(Rejection::from(&error));
                 return self.respond(request.id, rejection).await;
@@ -164,7 +171,7 @@ impl Session {
             };
             let _ = handled_tx.send(Handled {
                 request_id: request.id,
-                envelope_id: envelope.id,
+                responder,
                 response,
             });
         });
@@ -196,7 +203,8 @@ impl From<&envelope::Error> for Rejection {
         let reason = match error {
             envelope::Error::Expired => rejection::Reason::Expired,
             envelope::Error::Replayed => rejection::Reason::Replayed,
-            envelope::Error::UnsupportedVersion(_) | envelope::Error::Undecryptable => {
+            envelope::Error::UnknownSession => rejection::Reason::UnknownSession,
+            envelope::Error::UnsupportedFrame(_) | envelope::Error::Undecryptable => {
                 rejection::Reason::Undecryptable
             }
             envelope::Error::Malformed

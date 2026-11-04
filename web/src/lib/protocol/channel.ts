@@ -3,12 +3,13 @@ import { decompress } from 'fzstd';
 import { z } from 'zod';
 import type { Envelope } from './bindings/Envelope';
 
-const VERSION = 1;
+const FRAME = { sealed: 1, handshake: 2 } as const;
 const NONCE_LENGTH = 24;
 const ENCODING_JSON = 0;
 const ENCODING_ZSTD = 1;
 const REQUEST_LABEL = 'dbgopher/request';
 const RESPONSE_LABEL = 'dbgopher/response';
+const SESSION_LABEL = 'dbgopher/session';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -19,8 +20,42 @@ const envelopeSchema = z.object({
 	body: z.unknown()
 }) satisfies z.ZodType<Envelope<unknown>>;
 
-export const deriveKey = (connectorKey: Uint8Array, label: string) =>
-	sodium.crypto_generichash(32, encoder.encode(label), connectorKey);
+export type Exchange = (sessionId: string, frame: Uint8Array) => Promise<Uint8Array>;
+
+const concat = (...parts: Uint8Array[]) => {
+	const joined = new Uint8Array(parts.reduce((length, part) => length + part.length, 0));
+	let offset = 0;
+	for (const part of parts) {
+		joined.set(part, offset);
+		offset += part.length;
+	}
+	return joined;
+};
+
+export const deriveKey = (sessionKey: Uint8Array, label: string) =>
+	sodium.crypto_generichash(32, encoder.encode(label), sessionKey);
+
+export const deriveSessionKey = (
+	connectorKey: Uint8Array,
+	sessionId: string,
+	browserPublic: Uint8Array,
+	connectorPublic: Uint8Array,
+	shared: Uint8Array
+) =>
+	sodium.crypto_generichash(
+		32,
+		concat(
+			encoder.encode(SESSION_LABEL),
+			encoder.encode(sessionId),
+			browserPublic,
+			connectorPublic,
+			shared
+		),
+		connectorKey
+	);
+
+export const handshakeFrame = (browserPublic: Uint8Array) =>
+	concat(Uint8Array.of(FRAME.handshake), browserPublic);
 
 export const seal = (
 	key: Uint8Array,
@@ -35,15 +70,11 @@ export const seal = (
 		nonce,
 		key
 	);
-	const sealed = new Uint8Array(1 + NONCE_LENGTH + ciphertext.length);
-	sealed.set([VERSION]);
-	sealed.set(nonce, 1);
-	sealed.set(ciphertext, 1 + NONCE_LENGTH);
-	return sealed;
+	return concat(Uint8Array.of(FRAME.sealed), nonce, ciphertext);
 };
 
 export const open = (key: Uint8Array, aad: Uint8Array, sealed: Uint8Array) => {
-	if (sealed[0] !== VERSION) throw new Error(`Unsupported envelope version ${sealed[0]}`);
+	if (sealed[0] !== FRAME.sealed) throw new Error(`Unsupported envelope version ${sealed[0]}`);
 	const nonce = sealed.subarray(1, 1 + NONCE_LENGTH);
 	return sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
 		null,
@@ -71,13 +102,33 @@ export const decode = (plaintext: Uint8Array) => {
 	return envelopeSchema.parse(JSON.parse(decoder.decode(json)));
 };
 
-export const createChannel = async (connectorKey: Uint8Array, connectorId: string) => {
+export const createChannel = async (
+	connectorKey: Uint8Array,
+	connectorId: string,
+	exchange: Exchange
+) => {
 	await sodium.ready;
-	const requestKey = deriveKey(connectorKey, REQUEST_LABEL);
-	const responseKey = deriveKey(connectorKey, RESPONSE_LABEL);
+	const sessionId = crypto.randomUUID();
+	const secret = sodium.randombytes_buf(32);
+	const browserPublic = sodium.crypto_scalarmult_base(secret);
+	const connectorPublic = await exchange(sessionId, handshakeFrame(browserPublic));
+	const shared = sodium.crypto_scalarmult(secret, connectorPublic);
+	sodium.memzero(secret);
+	const sessionKey = deriveSessionKey(
+		connectorKey,
+		sessionId,
+		browserPublic,
+		connectorPublic,
+		shared
+	);
+	sodium.memzero(shared);
+	const requestKey = deriveKey(sessionKey, REQUEST_LABEL);
+	const responseKey = deriveKey(sessionKey, RESPONSE_LABEL);
+	sodium.memzero(sessionKey);
 	const aad = encoder.encode(connectorId);
 
 	return {
+		sessionId,
 		sealRequest: (body: unknown) => {
 			const envelope: Envelope<unknown> = { id: crypto.randomUUID(), sentAt: Date.now(), body };
 			return { id: envelope.id, sealed: seal(requestKey, aad, encode(envelope)) };

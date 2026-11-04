@@ -9,7 +9,7 @@ import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { hashToken } from '../src/lib/server/tokens';
 import { connector, session, user } from '../src/lib/server/db/schema';
-import { createChannel } from '../src/lib/protocol/channel';
+import { createChannel, handshakeFrame } from '../src/lib/protocol/channel';
 import { ConnectorError, createClient, RelayError } from '../src/lib/protocol/client';
 import type { Column } from '../src/lib/protocol/bindings/Column';
 import { deriveWrappingKey } from '../src/lib/vault/argon2';
@@ -122,17 +122,24 @@ const startConnector = (overrides: Record<string, string> = {}) =>
 		...overrides
 	});
 
-const post = (sealed: Uint8Array, cookie = ownerCookie) =>
+const post = (frame: Uint8Array, sessionId: string, cookie = ownerCookie) =>
 	fetch(`http://127.0.0.1:${port}/v1/connectors/${credentials.id}/rpc`, {
 		method: 'POST',
-		headers: { 'content-type': 'application/octet-stream', 'x-session-id': 'e2e', cookie },
-		body: new Uint8Array(sealed)
+		headers: { 'content-type': 'application/octet-stream', 'x-session-id': sessionId, cookie },
+		body: new Uint8Array(frame)
+	});
+
+const connect = (key = credentials.key) =>
+	createChannel(key, credentials.id, async (sessionId, frame) => {
+		const response = await post(frame, sessionId);
+		expect(response.status).toBe(200);
+		return new Uint8Array(await response.arrayBuffer());
 	});
 
 const send = async (body: unknown, key = credentials.key) => {
-	const channel = await createChannel(key, credentials.id);
+	const channel = await connect(key);
 	const { id, sealed } = channel.sealRequest(body);
-	const response = await post(sealed);
+	const response = await post(sealed, channel.sessionId);
 	return {
 		response,
 		open: async () => channel.openResponse(id, new Uint8Array(await response.arrayBuffer()))
@@ -202,19 +209,21 @@ afterAll(async () => {
 describe('relay', () => {
 	it('requires a signed-in user', async () => {
 		await startConnector().waitFor('Connected to relay');
-		const channel = await createChannel(credentials.key, credentials.id);
-		expect((await post(channel.sealRequest({ type: 'hello' }).sealed, '')).status).toBe(401);
+		const channel = await connect();
+		const { sealed } = channel.sealRequest({ type: 'hello' });
+		expect((await post(sealed, channel.sessionId, '')).status).toBe(401);
 	});
 
 	it("hides connectors from users who don't own them", async () => {
 		await startConnector().waitFor('Connected to relay');
-		const channel = await createChannel(credentials.key, credentials.id);
-		const response = await post(channel.sealRequest({ type: 'hello' }).sealed, strangerCookie);
+		const channel = await connect();
+		const { sealed } = channel.sealRequest({ type: 'hello' });
+		const response = await post(sealed, channel.sessionId, strangerCookie);
 		expect(response.status).toBe(404);
 	});
 
 	it('reports connectors that are not connected as offline', async () => {
-		const { response } = await hello();
+		const response = await post(new Uint8Array(33), randomUUID());
 		expect(response.status).toBe(503);
 	});
 
@@ -464,9 +473,9 @@ describe('relay', () => {
 
 	it('returns encrypted errors for unknown requests', async () => {
 		await startConnector().waitFor('Connected to relay');
-		const channel = await createChannel(credentials.key, credentials.id);
+		const channel = await connect();
 		const { id, sealed } = channel.sealRequest({ type: 'teleport' });
-		const response = await post(sealed);
+		const response = await post(sealed, channel.sessionId);
 		expect(channel.openResponse(id, new Uint8Array(await response.arrayBuffer()))).toMatchObject({
 			type: 'error'
 		});
@@ -481,12 +490,28 @@ describe('relay', () => {
 
 	it('rejects replayed requests', async () => {
 		await startConnector().waitFor('Connected to relay');
-		const channel = await createChannel(credentials.key, credentials.id);
+		const channel = await connect();
 		const { sealed } = channel.sealRequest({ type: 'hello' });
-		expect((await post(sealed)).status).toBe(200);
-		const replay = await post(sealed);
+		expect((await post(sealed, channel.sessionId)).status).toBe(200);
+		const replay = await post(sealed, channel.sessionId);
 		expect(replay.status).toBe(422);
 		expect(await replay.json()).toEqual({ rejection: 'REPLAYED' });
+	});
+
+	it('rejects requests for sessions the connector has not opened', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const channel = await connect();
+		const { sealed } = channel.sealRequest({ type: 'hello' });
+		const response = await post(sealed, randomUUID());
+		expect(response.status).toBe(422);
+		expect(await response.json()).toEqual({ rejection: 'UNKNOWN_SESSION' });
+	});
+
+	it('rejects malformed handshakes', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const response = await post(handshakeFrame(Uint8Array.of(1, 2, 3)), randomUUID());
+		expect(response.status).toBe(422);
+		expect(await response.json()).toEqual({ rejection: 'MALFORMED' });
 	});
 
 	it('stops connectors with an invalid token', async () => {
@@ -562,7 +587,7 @@ describe('relay', () => {
 describe('browser client', () => {
 	it('loads hello and the overview', async () => {
 		await startConnector().waitFor('Connected to relay');
-		const client = await browserClient();
+		const client = browserClient();
 		expect(await client.hello()).toMatchObject({ type: 'hello', readOnly: true });
 		const { tables } = await client.overview();
 		expect(tables.map((table) => `${table.schema}.${table.name}`)).toEqual([
@@ -580,7 +605,7 @@ describe('browser client', () => {
 
 	it('browses rows', async () => {
 		await startConnector().waitFor('Connected to relay');
-		const client = await browserClient();
+		const client = browserClient();
 		const { columns, rows } = await client.browse({
 			schema: 'public',
 			table: 'orders',
@@ -602,7 +627,7 @@ describe('browser client', () => {
 
 	it('browses binary columns as their length', async () => {
 		await startConnector().waitFor('Connected to relay');
-		const client = await browserClient();
+		const client = browserClient();
 		const { rows } = await client.browse({ schema: 'audit', table: 'Event Log' });
 		expect(rows).toEqual([
 			[
@@ -613,16 +638,25 @@ describe('browser client', () => {
 		]);
 	});
 
+	it('opens a new session when the connector restarts', async () => {
+		const first = startConnector();
+		await first.waitFor('Connected to relay');
+		const client = browserClient();
+		await client.hello();
+		first.child.kill();
+		await exitCode(first.child);
+		await startConnector().waitFor('Connected to relay');
+		expect(await client.hello()).toMatchObject({ type: 'hello' });
+	});
+
 	it('reports offline connectors', async () => {
-		const client = await browserClient();
+		const client = browserClient();
 		await expect(client.hello()).rejects.toMatchObject({ reason: 'offline' });
 	});
 
 	it('reports keys the connector cannot use', async () => {
 		await startConnector().waitFor('Connected to relay');
-		const error = await (
-			await browserClient(randomBytes(32))
-		)
+		const error = await browserClient(randomBytes(32))
 			.hello()
 			.catch((error: unknown) => error);
 		expect(error).toBeInstanceOf(RelayError);
@@ -634,7 +668,9 @@ describe('browser client', () => {
 		await startConnector({
 			DATABASE_URL: `postgres://postgres@127.0.0.1:${closed}/postgres`
 		}).waitFor('Connected to relay');
-		const error = await (await browserClient()).overview().catch((error: unknown) => error);
+		const error = await browserClient()
+			.overview()
+			.catch((error: unknown) => error);
 		expect(error).toBeInstanceOf(ConnectorError);
 		expect(error).toMatchObject({ message: expect.stringContaining('error connecting to server') });
 	});

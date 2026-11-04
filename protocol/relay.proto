@@ -60,6 +60,7 @@ message Rejection {
     REASON_EXPIRED = 2;
     REASON_REPLAYED = 3;
     REASON_MALFORMED = 4;
+    REASON_UNKNOWN_SESSION = 5;
   }
 
   Reason reason = 1;

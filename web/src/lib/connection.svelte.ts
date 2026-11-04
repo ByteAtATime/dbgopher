@@ -52,12 +52,12 @@ export const createConnection = (connectorId: string, connectorKey: Uint8Array) 
 	let rows = $state<RowsState>({ type: 'loading' });
 	let target: BrowseOptions | undefined;
 	let browsing: BrowseOptions | undefined;
-	let client: Client | undefined;
+	const client = createClient({ connectorId, connectorKey });
 	let stopped = false;
 
 	const refresh = async () => {
 		const current = target;
-		if (!client || !current || browsing === current) return;
+		if (!current || browsing === current) return;
 		if (status.type !== 'online' || rows.type === 'loaded') return;
 		browsing = current;
 		const browsed = await browse(client, current);
@@ -95,7 +95,6 @@ export const createConnection = (connectorId: string, connectorKey: Uint8Array) 
 		let timer: ReturnType<typeof setTimeout> | undefined;
 
 		const poll = async () => {
-			if (!client) return;
 			const next = await check(client);
 			if (stopped) return;
 			status = next;
@@ -109,15 +108,7 @@ export const createConnection = (connectorId: string, connectorKey: Uint8Array) 
 			timer = setTimeout(poll, POLL_INTERVAL_MS);
 		};
 
-		createClient({ connectorId, connectorKey }).then(
-			(created) => {
-				client = created;
-				return poll();
-			},
-			(error) => {
-				status = { type: 'unavailable', error: toError(error) };
-			}
-		);
+		void poll();
 
 		return () => {
 			stopped = true;

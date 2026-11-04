@@ -21,6 +21,7 @@ export type RelayErrorReason =
 	| 'undecryptable'
 	| 'expired'
 	| 'replayed'
+	| 'unknownSession'
 	| 'malformed'
 	| 'rejected'
 	| 'unexpected';
@@ -114,6 +115,8 @@ const errorSchema = z.object({
 
 const rejectionSchema = z.object({ rejection: z.string() });
 
+const REJECTED = 'The connector rejected the request.';
+
 const REJECTIONS = new Map<string, [RelayErrorReason, string]>([
 	[
 		'UNDECRYPTABLE',
@@ -130,6 +133,7 @@ const REJECTIONS = new Map<string, [RelayErrorReason, string]>([
 		]
 	],
 	['REPLAYED', ['replayed', 'The connector rejected the request as a replay.']],
+	['UNKNOWN_SESSION', ['unknownSession', REJECTED]],
 	['MALFORMED', ['malformed', 'The connector could not read the request. It may need updating.']]
 ]);
 
@@ -144,7 +148,7 @@ const toRelayError = async (response: Response) => {
 		case 422: {
 			const body = rejectionSchema.safeParse(await response.json().catch(() => undefined));
 			const known = body.success ? REJECTIONS.get(body.data.rejection) : undefined;
-			const [reason, message] = known ?? ['rejected', 'The connector rejected the request.'];
+			const [reason, message] = known ?? ['rejected', REJECTED];
 			return new RelayError(reason, message);
 		}
 		default:
@@ -152,26 +156,50 @@ const toRelayError = async (response: Response) => {
 	}
 };
 
-export const createClient = async ({
+export const createClient = ({
 	connectorId,
 	connectorKey,
 	fetch = globalThis.fetch
 }: ClientOptions) => {
-	const channel = await createChannel(connectorKey, connectorId);
-	const sessionId = crypto.randomUUID();
-
-	const call = async <T>(body: Request, schema: z.ZodType<T>) => {
-		const { id, sealed } = channel.sealRequest(body);
+	const post = async (sessionId: string, frame: Uint8Array) => {
 		const response = await fetch(`/v1/connectors/${encodeURIComponent(connectorId)}/rpc`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/octet-stream', 'x-session-id': sessionId },
-			body: new Uint8Array(sealed)
+			body: new Uint8Array(frame)
 		}).catch(() => {
 			throw new RelayError('unreachable', 'Could not reach the relay.');
 		});
 		if (!response.ok) throw await toRelayError(response);
+		return new Uint8Array(await response.arrayBuffer());
+	};
 
-		const opened = channel.openResponse(id, new Uint8Array(await response.arrayBuffer()));
+	let channel: ReturnType<typeof createChannel> | undefined;
+
+	const connect = () => {
+		const pending = createChannel(connectorKey, connectorId, post);
+		channel = pending;
+		pending.catch(() => {
+			if (channel === pending) channel = undefined;
+		});
+		return pending;
+	};
+
+	const send = async (body: Request, retry = true): Promise<unknown> => {
+		const pending = channel ?? connect();
+		const { sessionId, sealRequest, openResponse } = await pending;
+		const { id, sealed } = sealRequest(body);
+		try {
+			return openResponse(id, await post(sessionId, sealed));
+		} catch (error) {
+			if (!retry || !(error instanceof RelayError) || error.reason !== 'unknownSession')
+				throw error;
+			if (channel === pending) channel = undefined;
+			return send(body, false);
+		}
+	};
+
+	const call = async <T>(body: Request, schema: z.ZodType<T>) => {
+		const opened = await send(body);
 		const error = errorSchema.safeParse(opened);
 		if (error.success) throw new ConnectorError(error.data.message);
 		const result = schema.safeParse(opened);
@@ -190,4 +218,4 @@ export const createClient = async ({
 	};
 };
 
-export type Client = Awaited<ReturnType<typeof createClient>>;
+export type Client = ReturnType<typeof createClient>;
