@@ -11,7 +11,7 @@ mod session;
 #[cfg(test)]
 mod vectors;
 
-pub use session::{Channels, Opened, Responder};
+pub use session::{Channels, Responder};
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -35,8 +35,8 @@ pub enum Error {
     Expired,
     #[error("message was already received")]
     Replayed,
-    #[error("session is unknown or has expired")]
-    UnknownSession,
+    #[error("request was sealed for a prekey the connector no longer holds")]
+    StaleKey,
     #[error(transparent)]
     Compression(#[from] std::io::Error),
     #[error(transparent)]

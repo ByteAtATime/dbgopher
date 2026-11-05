@@ -3,7 +3,7 @@ import { decompress } from 'fzstd';
 import { z } from 'zod';
 import type { Envelope } from './bindings/Envelope';
 
-const FRAME = { sealed: 1, handshake: 2 } as const;
+const FRAME = { sealed: 1, request: 3 } as const;
 const NONCE_LENGTH = 24;
 const ENCODING_JSON = 0;
 const ENCODING_ZSTD = 1;
@@ -20,8 +20,6 @@ const envelopeSchema = z.object({
 	body: z.unknown()
 }) satisfies z.ZodType<Envelope<unknown>>;
 
-export type Exchange = (sessionId: string, frame: Uint8Array) => Promise<Uint8Array>;
-
 const concat = (...parts: Uint8Array[]) => {
 	const joined = new Uint8Array(parts.reduce((length, part) => length + part.length, 0));
 	let offset = 0;
@@ -37,25 +35,18 @@ export const deriveKey = (sessionKey: Uint8Array, label: string) =>
 
 export const deriveSessionKey = (
 	connectorKey: Uint8Array,
-	sessionId: string,
 	browserPublic: Uint8Array,
-	connectorPublic: Uint8Array,
+	prekey: Uint8Array,
 	shared: Uint8Array
 ) =>
 	sodium.crypto_generichash(
 		32,
-		concat(
-			encoder.encode(SESSION_LABEL),
-			encoder.encode(sessionId),
-			browserPublic,
-			connectorPublic,
-			shared
-		),
+		concat(encoder.encode(SESSION_LABEL), browserPublic, prekey, shared),
 		connectorKey
 	);
 
-export const handshakeFrame = (browserPublic: Uint8Array) =>
-	concat(Uint8Array.of(FRAME.handshake), browserPublic);
+export const requestHeader = (prekey: Uint8Array, browserPublic: Uint8Array) =>
+	concat(Uint8Array.of(FRAME.request), prekey, browserPublic);
 
 export const seal = (
 	key: Uint8Array,
@@ -105,33 +96,25 @@ export const decode = (plaintext: Uint8Array) => {
 export const createChannel = async (
 	connectorKey: Uint8Array,
 	connectorId: string,
-	exchange: Exchange
+	prekey: Uint8Array
 ) => {
 	await sodium.ready;
-	const sessionId = crypto.randomUUID();
 	const secret = sodium.randombytes_buf(32);
 	const browserPublic = sodium.crypto_scalarmult_base(secret);
-	const connectorPublic = await exchange(sessionId, handshakeFrame(browserPublic));
-	const shared = sodium.crypto_scalarmult(secret, connectorPublic);
+	const shared = sodium.crypto_scalarmult(secret, prekey);
 	sodium.memzero(secret);
-	const sessionKey = deriveSessionKey(
-		connectorKey,
-		sessionId,
-		browserPublic,
-		connectorPublic,
-		shared
-	);
+	const sessionKey = deriveSessionKey(connectorKey, browserPublic, prekey, shared);
 	sodium.memzero(shared);
 	const requestKey = deriveKey(sessionKey, REQUEST_LABEL);
 	const responseKey = deriveKey(sessionKey, RESPONSE_LABEL);
 	sodium.memzero(sessionKey);
 	const aad = encoder.encode(connectorId);
+	const header = requestHeader(prekey, browserPublic);
 
 	return {
-		sessionId,
 		sealRequest: (body: unknown) => {
 			const envelope: Envelope<unknown> = { id: crypto.randomUUID(), sentAt: Date.now(), body };
-			return { id: envelope.id, sealed: seal(requestKey, aad, encode(envelope)) };
+			return { id: envelope.id, sealed: concat(header, seal(requestKey, aad, encode(envelope))) };
 		},
 		openResponse: (id: string, sealed: Uint8Array) => {
 			const envelope = decode(open(responseKey, aad, sealed));

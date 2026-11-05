@@ -1,12 +1,12 @@
 import sodium from 'libsodium-wrappers';
 import { beforeAll, describe, expect, it } from 'vitest';
-import vectors from '../../../../protocol/vectors.json';
 import { decode, deriveKey, deriveSessionKey, encode, open, seal } from './channel';
 import { ConnectorError, createClient, RelayError, type Fetch } from './client';
 
 const CONNECTOR_ID = 'c0ffee00-0000-4000-8000-000000000000';
+const RPC = `POST /v1/connectors/${CONNECTOR_ID}/rpc`;
+const PREKEY = `GET /v1/connectors/${CONNECTOR_ID}/prekey`;
 const aad = new TextEncoder().encode(CONNECTOR_ID);
-const HANDSHAKE = parseInt(vectors.handshake.frame.slice(0, 2), 16);
 let connectorKey: Uint8Array;
 
 beforeAll(async () => {
@@ -15,30 +15,33 @@ beforeAll(async () => {
 });
 
 const connector = (respond: (request: unknown) => unknown) => {
-	const sessions = new Map<string, Uint8Array>();
-	const handshakes: string[] = [];
-	const fetch: Fetch = async (_path, init) => {
-		const sessionId = new Headers(init.headers).get('x-session-id') ?? '';
+	const calls: string[] = [];
+	let secret = sodium.randombytes_buf(32);
+	let prekey = sodium.crypto_scalarmult_base(secret);
+	const rotate = () => {
+		secret = sodium.randombytes_buf(32);
+		prekey = sodium.crypto_scalarmult_base(secret);
+	};
+	const fetch: Fetch = async (path, init) => {
+		calls.push(`${init.method} ${path}`);
+		if (path.endsWith('/prekey')) return new Response(new Uint8Array(prekey));
 		const frame = new Uint8Array(await new Response(init.body).arrayBuffer());
-		if (frame[0] === HANDSHAKE) {
-			const secret = sodium.randombytes_buf(32);
-			const connectorPublic = sodium.crypto_scalarmult_base(secret);
-			const browserPublic = frame.subarray(1);
-			const shared = sodium.crypto_scalarmult(secret, browserPublic);
-			handshakes.push(sessionId);
-			sessions.set(
-				sessionId,
-				deriveSessionKey(connectorKey, sessionId, browserPublic, connectorPublic, shared)
-			);
-			return new Response(new Uint8Array(connectorPublic));
-		}
-		const sessionKey = sessions.get(sessionId);
-		if (!sessionKey) return Response.json({ rejection: 'UNKNOWN_SESSION' }, { status: 422 });
-		const request = decode(open(deriveKey(sessionKey, 'dbgopher/request'), aad, frame));
+		if (sodium.to_hex(frame.subarray(1, 33)) !== sodium.to_hex(prekey))
+			return Response.json({ rejection: 'STALE_KEY' }, { status: 422 });
+		const browserPublic = frame.subarray(33, 65);
+		const sessionKey = deriveSessionKey(
+			connectorKey,
+			browserPublic,
+			prekey,
+			sodium.crypto_scalarmult(secret, browserPublic)
+		);
+		const request = decode(
+			open(deriveKey(sessionKey, 'dbgopher/request'), aad, frame.subarray(65))
+		);
 		const envelope = { id: request.id, sentAt: Date.now(), body: respond(request.body) };
 		return new Response(seal(deriveKey(sessionKey, 'dbgopher/response'), aad, encode(envelope)));
 	};
-	return { fetch, sessions, handshakes };
+	return { fetch, calls, rotate };
 };
 
 const client = (fetch: Fetch) => createClient({ connectorId: CONNECTOR_ID, connectorKey, fetch });
@@ -52,35 +55,36 @@ const hello = {
 };
 
 describe('createClient', () => {
-	it('posts sealed requests to the connector over one handshaken session', async () => {
-		const calls: [string, RequestInit][] = [];
-		const { fetch, handshakes } = connector(() => hello);
-		const api = client((path, init) => {
-			calls.push([path, init]);
-			return fetch(path, init);
-		});
+	it('fetches the prekey once when none is seeded', async () => {
+		const { fetch, calls } = connector(() => hello);
+		const api = client(fetch);
 		await Promise.all([api.hello(), api.hello()]);
 		await api.hello();
-		expect(calls.map(([path]) => path)).toEqual(
-			Array(4).fill(`/v1/connectors/${CONNECTOR_ID}/rpc`)
-		);
-		const sessions = calls.map(([, init]) => new Headers(init.headers).get('x-session-id'));
-		expect(handshakes).toHaveLength(1);
-		expect(sessions).toEqual(Array(4).fill(handshakes[0]));
+		expect(calls).toEqual([PREKEY, RPC, RPC, RPC]);
 	});
 
-	it('handshakes again when the connector forgets the session', async () => {
-		const { fetch, sessions, handshakes } = connector(() => hello);
+	it('fetches a fresh prekey and retries once when the prekey is stale', async () => {
+		const { fetch, calls, rotate } = connector(() => hello);
 		const api = client(fetch);
 		await api.hello();
-		sessions.clear();
+		rotate();
 		expect(await api.hello()).toEqual(hello);
-		expect(handshakes).toHaveLength(2);
-		expect(handshakes[1]).not.toBe(handshakes[0]);
+		expect(calls).toEqual([PREKEY, RPC, RPC, PREKEY, RPC]);
 	});
 
-	it('handshakes again after a failed handshake', async () => {
-		const { fetch, handshakes } = connector(() => hello);
+	it('gives up when a fresh prekey is also stale', async () => {
+		const { fetch, calls, rotate } = connector(() => hello);
+		const api = client(async (path, init) => {
+			const response = await fetch(path, init);
+			if (path.endsWith('/prekey')) rotate();
+			return response;
+		});
+		await expect(api.hello()).rejects.toMatchObject({ reason: 'staleKey' });
+		expect(calls).toEqual([PREKEY, RPC, PREKEY, RPC]);
+	});
+
+	it('fetches the prekey again after the connector was offline', async () => {
+		const { fetch, calls } = connector(() => hello);
 		let offline = true;
 		const api = client(async (path, init) =>
 			offline ? new Response(null, { status: 503 }) : fetch(path, init)
@@ -88,17 +92,12 @@ describe('createClient', () => {
 		await expect(api.hello()).rejects.toMatchObject({ reason: 'offline' });
 		offline = false;
 		expect(await api.hello()).toEqual(hello);
-		expect(handshakes).toHaveLength(1);
+		expect(calls).toEqual([PREKEY, RPC]);
 	});
 
-	it('gives up when a fresh session is also unknown', async () => {
-		const { fetch, sessions } = connector(() => hello);
-		const api = client(async (path, init) => {
-			const response = await fetch(path, init);
-			sessions.clear();
-			return response;
-		});
-		await expect(api.hello()).rejects.toMatchObject({ reason: 'unknownSession' });
+	it('rejects low-order prekeys', async () => {
+		const api = client(async () => new Response(new Uint8Array(32)));
+		await expect(api.hello()).rejects.toThrow();
 	});
 
 	it('returns the response to a request', async () => {
@@ -146,10 +145,15 @@ describe('createClient', () => {
 		['EXPIRED', 'expired'],
 		['REPLAYED', 'replayed'],
 		['MALFORMED', 'malformed'],
-		['UNKNOWN_SESSION', 'unknownSession'],
+		['STALE_KEY', 'staleKey'],
 		['UNSPECIFIED', 'rejected']
 	])('maps the %s rejection to %s', async (rejection, reason) => {
-		const api = client(async () => Response.json({ rejection }, { status: 422 }));
+		const prekey = sodium.crypto_scalarmult_base(sodium.randombytes_buf(32));
+		const api = client(async (path) =>
+			path.endsWith('/prekey')
+				? new Response(new Uint8Array(prekey))
+				: Response.json({ rejection }, { status: 422 })
+		);
 		await expect(api.hello()).rejects.toMatchObject({ name: 'RelayError', reason });
 	});
 

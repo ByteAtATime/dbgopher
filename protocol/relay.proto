@@ -44,8 +44,9 @@ message Close {
 }
 
 message Request {
+  reserved 2;
+  reserved "session_id";
   uint64 id = 1;
-  string session_id = 2;
   bytes sealed = 3;
 }
 
@@ -65,7 +66,10 @@ message Rejection {
     REASON_EXPIRED = 2;
     REASON_REPLAYED = 3;
     REASON_MALFORMED = 4;
-    REASON_UNKNOWN_SESSION = 5;
+    REASON_STALE_KEY = 6;
+
+    reserved 5;
+    reserved "REASON_UNKNOWN_SESSION";
   }
 
   Reason reason = 1;

@@ -9,7 +9,7 @@ use super::cipher::Direction;
 pub struct Vectors {
     pub connector_key: String,
     pub connector_id: String,
-    pub handshake: Handshake,
+    pub prekey: Prekey,
     pub request_key: String,
     pub response_key: String,
     pub messages: Vec<Message>,
@@ -17,15 +17,14 @@ pub struct Vectors {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Handshake {
-    pub session_id: String,
+pub struct Prekey {
     pub browser_secret: String,
     pub browser_public: String,
-    pub connector_secret: String,
-    pub connector_public: String,
+    pub prekey_secret: String,
+    pub prekey_public: String,
     pub shared: String,
     pub session_key: String,
-    pub frame: String,
+    pub header: String,
 }
 
 #[derive(Deserialize)]

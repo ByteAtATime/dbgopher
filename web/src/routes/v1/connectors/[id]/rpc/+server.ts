@@ -10,7 +10,7 @@ export const POST = async ({ params, request, locals }) => {
 	const sealed = new Uint8Array(await request.arrayBuffer());
 	if (sealed.length > MAX_SEALED_SIZE) error(413, 'Request is too large');
 
-	const result = await relay.rpc(params.id, request.headers.get('x-session-id') ?? '', sealed);
+	const result = await relay.rpc(params.id, sealed);
 	if (result.status === 'offline') error(503, 'Connector is offline');
 	if (result.status === 'timeout') error(504, 'Connector did not respond in time');
 	if (result.status === 'rejected') {

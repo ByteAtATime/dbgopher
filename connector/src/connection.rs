@@ -6,7 +6,7 @@ use prost::Message as _;
 use serde_json::Value;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tokio::time::{sleep, timeout};
+use tokio::time::{Instant, interval_at, sleep, timeout};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async_with_config};
@@ -14,11 +14,11 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async_with_conf
 use crate::RELAY_PROTOCOL_VERSION;
 use crate::config::Config;
 use crate::database::Database;
-use crate::envelope::{self, Channels, Opened, Responder};
+use crate::envelope::{self, Channels, Responder};
 use crate::messages::{self, Request, Response};
 use crate::relay::{
-    self, Close, ConnectorMessage, Hello, Rejection, RelayMessage, connector_message, rejection,
-    relay_message, response,
+    self, Close, ConnectorMessage, Hello, Prekey, Rejection, RelayMessage, connector_message,
+    rejection, relay_message, response,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -114,6 +114,7 @@ impl Session {
 
     async fn run(mut self, backoff: &mut Backoff) -> Result<Close, Error> {
         let (handled_tx, mut handled_rx) = mpsc::unbounded_channel();
+        let mut rotation = interval_at(Instant::now() + Channels::ROTATION, Channels::ROTATION);
         loop {
             tokio::select! {
                 message = timeout(Self::READ_TIMEOUT, self.socket.next()) => {
@@ -122,6 +123,7 @@ impl Session {
                     };
                     match RelayMessage::decode(data)?.message {
                         Some(relay_message::Message::Welcome(_)) => {
+                            self.publish_prekey().await?;
                             eprintln!("Connected to relay");
                             backoff.reset();
                         }
@@ -136,6 +138,10 @@ impl Session {
                     let sealed = responder.seal(&response)?;
                     self.respond(request_id, response::Result::Sealed(sealed)).await?;
                 }
+                _ = rotation.tick() => {
+                    self.channels.rotate();
+                    self.publish_prekey().await?;
+                }
             }
         }
     }
@@ -145,16 +151,8 @@ impl Session {
         request: relay::Request,
         handled_tx: &mpsc::UnboundedSender<Handled>,
     ) -> Result<(), Error> {
-        let (envelope, responder) = match self
-            .channels
-            .open::<Value>(&request.session_id, &request.sealed)
-        {
-            Ok(Opened::Request(envelope, responder)) => (envelope, responder),
-            Ok(Opened::Handshake(public)) => {
-                return self
-                    .respond(request.id, response::Result::Sealed(public))
-                    .await;
-            }
+        let (envelope, responder) = match self.channels.open::<Value>(&request.sealed) {
+            Ok(opened) => opened,
             Err(error) => {
                 let rejection = response::Result::Rejection(Rejection::from(&error));
                 return self.respond(request.id, rejection).await;
@@ -176,6 +174,13 @@ impl Session {
             });
         });
         Ok(())
+    }
+
+    async fn publish_prekey(&mut self) -> Result<(), Error> {
+        let prekey = Prekey {
+            public_key: self.channels.prekey().to_vec(),
+        };
+        self.send(connector_message::Message::Prekey(prekey)).await
     }
 
     async fn respond(&mut self, request_id: u64, result: response::Result) -> Result<(), Error> {
@@ -203,7 +208,7 @@ impl From<&envelope::Error> for Rejection {
         let reason = match error {
             envelope::Error::Expired => rejection::Reason::Expired,
             envelope::Error::Replayed => rejection::Reason::Replayed,
-            envelope::Error::UnknownSession => rejection::Reason::UnknownSession,
+            envelope::Error::StaleKey => rejection::Reason::StaleKey,
             envelope::Error::UnsupportedFrame(_) | envelope::Error::Undecryptable => {
                 rejection::Reason::Undecryptable
             }

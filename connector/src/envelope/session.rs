@@ -1,35 +1,15 @@
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use chacha20poly1305::XNonce;
 use chacha20poly1305::aead::Generate;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
-use x25519_dalek::{EphemeralSecret, PublicKey};
+use x25519_dalek::{PublicKey, ReusableSecret};
 
 use super::cipher::{Cipher, Direction, Frame, mac};
 use super::{Envelope, Error, now_ms};
-
-#[derive(Clone, Copy)]
-struct Now {
-    wall_ms: u64,
-    instant: Instant,
-}
-
-impl Now {
-    fn current() -> Self {
-        Self {
-            wall_ms: now_ms(),
-            instant: Instant::now(),
-        }
-    }
-}
-
-pub enum Opened<T> {
-    Handshake(Vec<u8>),
-    Request(Envelope<T>, Responder),
-}
 
 pub struct Responder {
     id: Uuid,
@@ -52,132 +32,95 @@ impl Responder {
     }
 }
 
+struct Prekey {
+    secret: ReusableSecret,
+    public: PublicKey,
+}
+
+impl Prekey {
+    fn random() -> Self {
+        let secret = ReusableSecret::random();
+        let public = PublicKey::from(&secret);
+        Self { secret, public }
+    }
+}
+
+struct Prekeys {
+    current: Prekey,
+    previous: Option<Prekey>,
+}
+
+impl Prekeys {
+    fn find(&self, public: &[u8; 32]) -> Option<&Prekey> {
+        std::iter::once(&self.current)
+            .chain(&self.previous)
+            .find(|prekey| prekey.public.as_bytes() == public)
+    }
+}
+
 pub struct Channels {
     connector_key: [u8; 32],
     connector_id: String,
-    live: HashMap<String, Live>,
-}
-
-struct Live {
-    expires_at: Instant,
-    channel: Channel,
+    prekeys: Prekeys,
+    seen: HashMap<Uuid, u64>,
 }
 
 impl Channels {
-    const MAX_AGE: Duration = Duration::from_secs(60 * 60);
-    const MAX_LIVE: usize = 256;
+    pub const ROTATION: Duration = Duration::from_secs(30 * 60);
+    const MAX_AGE_MS: u64 = 60_000;
 
     pub fn new(connector_key: [u8; 32], connector_id: impl Into<String>) -> Self {
         Self {
             connector_key,
             connector_id: connector_id.into(),
-            live: HashMap::new(),
+            prekeys: Prekeys {
+                current: Prekey::random(),
+                previous: None,
+            },
+            seen: HashMap::new(),
         }
+    }
+
+    pub fn prekey(&self) -> [u8; 32] {
+        self.prekeys.current.public.to_bytes()
+    }
+
+    pub fn rotate(&mut self) {
+        let previous = std::mem::replace(&mut self.prekeys.current, Prekey::random());
+        self.prekeys.previous = Some(previous);
     }
 
     pub fn open<T: DeserializeOwned>(
         &mut self,
-        session_id: &str,
         frame: &[u8],
-    ) -> Result<Opened<T>, Error> {
-        self.open_at(session_id, frame, Now::current())
+    ) -> Result<(Envelope<T>, Responder), Error> {
+        self.open_at(frame, now_ms())
     }
 
     fn open_at<T: DeserializeOwned>(
         &mut self,
-        session_id: &str,
         frame: &[u8],
-        now: Now,
-    ) -> Result<Opened<T>, Error> {
-        if let [Frame::HANDSHAKE, browser_public @ ..] = frame {
-            let browser_public = PublicKey::from(
-                <[u8; 32]>::try_from(browser_public).map_err(|_| Error::Malformed)?,
-            );
-            return self.handshake(session_id, &browser_public, now);
-        }
-        let live = self
-            .live
-            .get_mut(session_id)
-            .filter(|live| now.instant < live.expires_at)
-            .ok_or(Error::UnknownSession)?;
-        let envelope = live.channel.open_request_at(frame, now.wall_ms)?;
-        let responder = live.channel.responder(envelope.id);
-        Ok(Opened::Request(envelope, responder))
-    }
-
-    fn handshake<T>(
-        &mut self,
-        session_id: &str,
-        browser_public: &PublicKey,
-        now: Now,
-    ) -> Result<Opened<T>, Error> {
-        let secret = EphemeralSecret::random();
-        let connector_public = PublicKey::from(&secret);
-        let shared = secret.diffie_hellman(browser_public);
+        now: u64,
+    ) -> Result<(Envelope<T>, Responder), Error> {
+        let request = RequestFrame::parse(frame)?;
+        let prekey = self
+            .prekeys
+            .find(request.prekey_public)
+            .ok_or(Error::StaleKey)?;
+        let browser_public = PublicKey::from(*request.browser_public);
+        let shared = prekey.secret.diffie_hellman(&browser_public);
         if !shared.was_contributory() {
             return Err(Error::Malformed);
         }
         let key = session_key(
             &self.connector_key,
-            session_id,
             browser_public.as_bytes(),
-            connector_public.as_bytes(),
+            prekey.public.as_bytes(),
             shared.as_bytes(),
         );
-        self.live.retain(|_, live| now.instant < live.expires_at);
-        if self.live.len() >= Self::MAX_LIVE
-            && let Some(oldest) = self
-                .live
-                .iter()
-                .min_by_key(|(_, live)| live.expires_at)
-                .map(|(id, _)| id.clone())
-        {
-            self.live.remove(&oldest);
-        }
-        self.live.insert(
-            session_id.into(),
-            Live {
-                expires_at: now.instant + Self::MAX_AGE,
-                channel: Channel::new(&key, self.connector_id.as_str()),
-            },
-        );
-        Ok(Opened::Handshake(connector_public.as_bytes().to_vec()))
-    }
-}
-
-struct Channel {
-    connector_id: String,
-    request: Cipher,
-    response: Cipher,
-    seen: HashMap<Uuid, u64>,
-}
-
-impl Channel {
-    const MAX_AGE_MS: u64 = 60_000;
-
-    fn new(session_key: &[u8; 32], connector_id: impl Into<String>) -> Self {
-        Self {
-            connector_id: connector_id.into(),
-            request: Cipher::new(session_key, Direction::Request),
-            response: Cipher::new(session_key, Direction::Response),
-            seen: HashMap::new(),
-        }
-    }
-
-    fn responder(&self, id: Uuid) -> Responder {
-        Responder {
-            id,
-            cipher: self.response.clone(),
-            aad: self.connector_id.clone(),
-        }
-    }
-
-    fn open_request_at<T: DeserializeOwned>(
-        &mut self,
-        sealed: &[u8],
-        now: u64,
-    ) -> Result<Envelope<T>, Error> {
-        let envelope = Envelope::<T>::decode(&self.request.open(self.aad(), sealed)?)?;
+        let aad = self.connector_id.as_bytes();
+        let plaintext = Cipher::new(&key, Direction::Request).open(aad, request.sealed)?;
+        let envelope = Envelope::<T>::decode(&plaintext)?;
         let is_fresh = |sent_at: u64| now.abs_diff(sent_at) <= Self::MAX_AGE_MS;
         if !is_fresh(envelope.sent_at) {
             return Err(Error::Expired);
@@ -186,30 +129,46 @@ impl Channel {
         if self.seen.insert(envelope.id, envelope.sent_at).is_some() {
             return Err(Error::Replayed);
         }
-        Ok(envelope)
+        let responder = Responder {
+            id: envelope.id,
+            cipher: Cipher::new(&key, Direction::Response),
+            aad: self.connector_id.clone(),
+        };
+        Ok((envelope, responder))
     }
+}
 
-    fn aad(&self) -> &[u8] {
-        self.connector_id.as_bytes()
+struct RequestFrame<'a> {
+    prekey_public: &'a [u8; 32],
+    browser_public: &'a [u8; 32],
+    sealed: &'a [u8],
+}
+
+impl<'a> RequestFrame<'a> {
+    fn parse(frame: &'a [u8]) -> Result<Self, Error> {
+        let (&kind, rest) = frame.split_first().ok_or(Error::Malformed)?;
+        if kind != Frame::REQUEST {
+            return Err(Error::UnsupportedFrame(kind));
+        }
+        let (prekey_public, rest) = rest.split_first_chunk().ok_or(Error::Malformed)?;
+        let (browser_public, sealed) = rest.split_first_chunk().ok_or(Error::Malformed)?;
+        Ok(Self {
+            prekey_public,
+            browser_public,
+            sealed,
+        })
     }
 }
 
 fn session_key(
     connector_key: &[u8; 32],
-    session_id: &str,
     browser_public: &[u8; 32],
-    connector_public: &[u8; 32],
+    prekey_public: &[u8; 32],
     shared: &[u8; 32],
 ) -> [u8; 32] {
     mac(
         connector_key,
-        &[
-            b"dbgopher/session",
-            session_id.as_bytes(),
-            browser_public,
-            connector_public,
-            shared,
-        ],
+        &[b"dbgopher/session", browser_public, prekey_public, shared],
     )
 }
 
@@ -218,18 +177,42 @@ mod tests {
     use super::*;
     use crate::envelope::vectors::{self, bytes};
     use serde_json::{Value, json};
-    use std::sync::LazyLock;
     use x25519_dalek::{X25519_BASEPOINT_BYTES, x25519};
 
     const CONNECTOR_ID: &str = "c0ffee00-0000-4000-8000-000000000000";
     const CONNECTOR_KEY: [u8; 32] = [9; 32];
-    const SESSION_ID: &str = "session";
+    const NOW: u64 = 1_000_000;
 
-    fn at(wall_ms: u64) -> Now {
-        static START: LazyLock<Instant> = LazyLock::new(Instant::now);
-        Now {
-            wall_ms,
-            instant: *START + Duration::from_millis(wall_ms),
+    struct Browser {
+        header: Vec<u8>,
+        key: [u8; 32],
+    }
+
+    impl Browser {
+        fn new(prekey_public: [u8; 32], connector_key: &[u8; 32]) -> Self {
+            let secret: [u8; 32] = rand::random();
+            let public = x25519(secret, X25519_BASEPOINT_BYTES);
+            let shared = x25519(secret, prekey_public);
+            Self {
+                header: [&[Frame::REQUEST], prekey_public.as_slice(), &public].concat(),
+                key: session_key(connector_key, &public, &prekey_public, &shared),
+            }
+        }
+
+        fn seal(&self, envelope: &Envelope<Value>) -> Vec<u8> {
+            let sealed = Cipher::new(&self.key, Direction::Request).seal(
+                CONNECTOR_ID.as_bytes(),
+                &XNonce::generate(),
+                &envelope.encode().unwrap(),
+            );
+            [self.header.as_slice(), &sealed].concat()
+        }
+
+        fn open(&self, sealed: &[u8]) -> Envelope<Value> {
+            let plaintext = Cipher::new(&self.key, Direction::Response)
+                .open(CONNECTOR_ID.as_bytes(), sealed)
+                .unwrap();
+            Envelope::decode(&plaintext).unwrap()
         }
     }
 
@@ -237,33 +220,8 @@ mod tests {
         Channels::new(CONNECTOR_KEY, CONNECTOR_ID)
     }
 
-    fn connect(channels: &mut Channels, session_id: &str, now: u64) -> Channel {
-        let secret = [5; 32];
-        let browser_public = x25519(secret, X25519_BASEPOINT_BYTES);
-        let frame = [&[Frame::HANDSHAKE], browser_public.as_slice()].concat();
-        let Opened::Handshake(connector_public) = channels
-            .open_at::<Value>(session_id, &frame, at(now))
-            .unwrap()
-        else {
-            panic!("expected a handshake response");
-        };
-        let connector_public: [u8; 32] = connector_public.try_into().unwrap();
-        let key = session_key(
-            &CONNECTOR_KEY,
-            session_id,
-            &browser_public,
-            &connector_public,
-            &x25519(secret, connector_public),
-        );
-        Channel::new(&key, CONNECTOR_ID)
-    }
-
-    fn seal_request(browser: &Channel, envelope: &Envelope<Value>) -> Vec<u8> {
-        browser.request.seal(
-            browser.aad(),
-            &XNonce::generate(),
-            &envelope.encode().unwrap(),
-        )
+    fn browser(channels: &Channels) -> Browser {
+        Browser::new(channels.prekey(), &CONNECTOR_KEY)
     }
 
     fn request(sent_at: u64) -> Envelope<Value> {
@@ -274,183 +232,143 @@ mod tests {
         }
     }
 
-    fn open(channels: &mut Channels, sealed: &[u8], now: u64) -> Result<Envelope<Value>, Error> {
-        match channels.open_at::<Value>(SESSION_ID, sealed, at(now))? {
-            Opened::Request(envelope, _) => Ok(envelope),
-            Opened::Handshake(_) => panic!("expected a request"),
-        }
+    fn open(channels: &mut Channels, frame: &[u8], now: u64) -> Result<Envelope<Value>, Error> {
+        channels
+            .open_at::<Value>(frame, now)
+            .map(|(envelope, _)| envelope)
     }
 
     #[test]
     fn derives_the_vector_session_key() {
         let vectors = vectors::load();
-        let handshake = &vectors.handshake;
-        let browser_secret = bytes(&handshake.browser_secret);
-        let connector_secret = bytes(&handshake.connector_secret);
-        let browser_public = bytes(&handshake.browser_public);
-        let connector_public = bytes(&handshake.connector_public);
-        let shared = bytes(&handshake.shared);
+        let prekey = &vectors.prekey;
+        let browser_secret = bytes(&prekey.browser_secret);
+        let prekey_secret = bytes(&prekey.prekey_secret);
+        let browser_public = bytes(&prekey.browser_public);
+        let prekey_public = bytes(&prekey.prekey_public);
+        let shared = bytes(&prekey.shared);
         assert_eq!(
             x25519(browser_secret, X25519_BASEPOINT_BYTES),
             browser_public
         );
-        assert_eq!(
-            x25519(connector_secret, X25519_BASEPOINT_BYTES),
-            connector_public
-        );
-        assert_eq!(x25519(browser_secret, connector_public), shared);
-        assert_eq!(x25519(connector_secret, browser_public), shared);
+        assert_eq!(x25519(prekey_secret, X25519_BASEPOINT_BYTES), prekey_public);
+        assert_eq!(x25519(browser_secret, prekey_public), shared);
+        assert_eq!(x25519(prekey_secret, browser_public), shared);
         let key = session_key(
             &bytes(&vectors.connector_key),
-            &handshake.session_id,
             &browser_public,
-            &connector_public,
+            &prekey_public,
             &shared,
         );
-        assert_eq!(hex::encode(key), handshake.session_key);
+        assert_eq!(hex::encode(key), prekey.session_key);
     }
 
     #[test]
-    fn accepts_the_vector_handshake_frame() {
+    fn splits_the_vector_header() {
         let vectors = vectors::load();
-        let handshake = &vectors.handshake;
-        let browser_public = bytes(&handshake.browser_public);
-        assert_eq!(
-            hex::encode([&[Frame::HANDSHAKE], browser_public.as_slice()].concat()),
-            handshake.frame
-        );
-        let mut channels = Channels::new(bytes(&vectors.connector_key), vectors.connector_id);
-        assert!(matches!(
-            channels.open_at::<Value>(
-                &handshake.session_id,
-                &hex::decode(&handshake.frame).unwrap(),
-                at(1_000_000)
-            ),
-            Ok(Opened::Handshake(public)) if public.len() == 32
-        ));
+        let prekey = &vectors.prekey;
+        let header = hex::decode(&prekey.header).unwrap();
+        let sealed = hex::decode(&vectors.messages[0].sealed).unwrap();
+        let frame = [header.as_slice(), &sealed].concat();
+        let request = RequestFrame::parse(&frame).unwrap();
+        assert_eq!(hex::encode(request.prekey_public), prekey.prekey_public);
+        assert_eq!(hex::encode(request.browser_public), prekey.browser_public);
+        assert_eq!(request.sealed, sealed);
     }
 
     #[test]
-    fn answers_requests_over_a_handshaken_session() {
+    fn answers_a_request_with_a_response_the_browser_can_open() {
         let mut channels = channels();
-        let browser = connect(&mut channels, SESSION_ID, 1_000_000);
-        let envelope = request(1_000_000);
-        let Opened::Request(opened, responder) = channels
-            .open_at::<Value>(
-                SESSION_ID,
-                &seal_request(&browser, &envelope),
-                at(1_000_000),
-            )
-            .unwrap()
-        else {
-            panic!("expected a request");
-        };
+        let browser = browser(&channels);
+        let envelope = request(NOW);
+        let (opened, responder) = channels
+            .open_at::<Value>(&browser.seal(&envelope), NOW)
+            .unwrap();
         assert_eq!(opened, envelope);
-        let sealed = responder.seal(&json!("pong")).unwrap();
-        let response =
-            Envelope::<Value>::decode(&browser.response.open(browser.aad(), &sealed).unwrap())
-                .unwrap();
+        let response = browser.open(&responder.seal(&json!("pong")).unwrap());
         assert_eq!((response.id, response.body), (envelope.id, json!("pong")));
     }
 
     #[test]
-    fn derives_distinct_keys_per_session() {
+    fn rejects_frames_keyed_for_another_connector() {
         let mut channels = channels();
-        let first = connect(&mut channels, SESSION_ID, 1_000_000);
-        connect(&mut channels, SESSION_ID, 1_000_000);
+        let browser = Browser::new(channels.prekey(), &[7; 32]);
         assert!(matches!(
-            open(
-                &mut channels,
-                &seal_request(&first, &request(1_000_000)),
-                1_000_000
-            ),
+            open(&mut channels, &browser.seal(&request(NOW)), NOW),
             Err(Error::Undecryptable)
         ));
     }
 
     #[test]
-    fn rejects_sessions_keyed_for_another_connector() {
+    fn opens_with_the_previous_prekey_until_it_is_rotated_out() {
         let mut channels = channels();
-        let mut other = Channels::new([7; 32], CONNECTOR_ID);
-        let browser = connect(&mut other, SESSION_ID, 1_000_000);
-        connect(&mut channels, SESSION_ID, 1_000_000);
+        let browser = browser(&channels);
+        channels.rotate();
+        assert_ne!(channels.prekey(), browser.header[1..33]);
+        assert!(open(&mut channels, &browser.seal(&request(NOW)), NOW).is_ok());
+        channels.rotate();
         assert!(matches!(
-            open(
-                &mut channels,
-                &seal_request(&browser, &request(1_000_000)),
-                1_000_000
-            ),
-            Err(Error::Undecryptable)
+            open(&mut channels, &browser.seal(&request(NOW)), NOW),
+            Err(Error::StaleKey)
         ));
     }
 
     #[test]
-    fn rejects_unknown_and_expired_sessions() {
+    fn rejects_unknown_prekeys() {
         let mut channels = channels();
-        let browser = connect(&mut channels, "another-session", 1_000_000);
-        let sealed = seal_request(&browser, &request(1_000_000));
+        let browser = Browser::new(rand::random(), &CONNECTOR_KEY);
         assert!(matches!(
-            open(&mut channels, &sealed, 1_000_000),
-            Err(Error::UnknownSession)
-        ));
-
-        let browser = connect(&mut channels, SESSION_ID, 1_000_000);
-        let expires_at = 1_000_000 + Channels::MAX_AGE.as_secs() * 1000;
-        let sealed = seal_request(&browser, &request(expires_at - 1));
-        assert!(open(&mut channels, &sealed, expires_at - 1).is_ok());
-        let sealed = seal_request(&browser, &request(expires_at));
-        assert!(matches!(
-            open(&mut channels, &sealed, expires_at),
-            Err(Error::UnknownSession)
+            open(&mut channels, &browser.seal(&request(NOW)), NOW),
+            Err(Error::StaleKey)
         ));
     }
 
     #[test]
-    fn evicts_the_oldest_session_when_full() {
+    fn rejects_malformed_frames() {
         let mut channels = channels();
-        let oldest = connect(&mut channels, SESSION_ID, 1_000_000);
-        for index in 1..=Channels::MAX_LIVE {
-            connect(&mut channels, &index.to_string(), 1_000_001);
-        }
-        assert_eq!(channels.live.len(), Channels::MAX_LIVE);
-        assert!(matches!(
-            open(
-                &mut channels,
-                &seal_request(&oldest, &request(1_000_001)),
-                1_000_001
-            ),
-            Err(Error::UnknownSession)
-        ));
-    }
-
-    #[test]
-    fn rejects_malformed_handshakes() {
-        let mut channels = channels();
+        let prekey = channels.prekey();
+        let sealed = browser(&channels).seal(&request(NOW))[65..].to_vec();
         for frame in [
-            vec![Frame::HANDSHAKE],
-            [&[Frame::HANDSHAKE], [1; 31].as_slice()].concat(),
-            [&[Frame::HANDSHAKE], [0; 32].as_slice()].concat(),
+            vec![],
+            vec![Frame::REQUEST],
+            [&[Frame::REQUEST], [1; 31].as_slice()].concat(),
+            [&[Frame::REQUEST], prekey.as_slice(), &[1; 31]].concat(),
+            [&[Frame::REQUEST], prekey.as_slice(), &[0; 32], &sealed].concat(),
         ] {
             assert!(matches!(
-                channels.open_at::<Value>(SESSION_ID, &frame, at(1_000_000)),
+                open(&mut channels, &frame, NOW),
                 Err(Error::Malformed)
             ));
         }
-        assert!(channels.live.is_empty());
+        assert!(channels.seen.is_empty());
+    }
+
+    #[test]
+    fn rejects_retired_handshake_frames() {
+        let mut channels = channels();
+        let frame = [&[2], channels.prekey().as_slice()].concat();
+        assert!(matches!(
+            open(&mut channels, &frame, NOW),
+            Err(Error::UnsupportedFrame(2))
+        ));
     }
 
     #[test]
     fn opens_fresh_requests_once() {
         let mut channels = channels();
-        let browser = connect(&mut channels, SESSION_ID, 1_000_000);
-        let envelope = request(1_000_000);
-        let sealed = seal_request(&browser, &envelope);
+        let envelope = request(NOW);
+        let frame = browser(&channels).seal(&envelope);
         assert_eq!(
-            open(&mut channels, &sealed, 1_000_000 + Channel::MAX_AGE_MS).unwrap(),
+            open(&mut channels, &frame, NOW + Channels::MAX_AGE_MS).unwrap(),
             envelope
         );
         assert!(matches!(
-            open(&mut channels, &sealed, 1_000_000),
+            open(&mut channels, &frame, NOW),
+            Err(Error::Replayed)
+        ));
+        let resealed = browser(&channels).seal(&envelope);
+        assert!(matches!(
+            open(&mut channels, &resealed, NOW),
             Err(Error::Replayed)
         ));
     }
@@ -458,14 +376,13 @@ mod tests {
     #[test]
     fn rejects_expired_requests() {
         let mut channels = channels();
-        let browser = connect(&mut channels, SESSION_ID, 1_000_000);
-        let sealed = seal_request(&browser, &request(1_000_000));
+        let frame = browser(&channels).seal(&request(NOW));
         assert!(matches!(
-            open(&mut channels, &sealed, 1_000_001 + Channel::MAX_AGE_MS),
+            open(&mut channels, &frame, NOW + 1 + Channels::MAX_AGE_MS),
             Err(Error::Expired)
         ));
         assert!(matches!(
-            open(&mut channels, &sealed, 999_999 - Channel::MAX_AGE_MS),
+            open(&mut channels, &frame, NOW - 1 - Channels::MAX_AGE_MS),
             Err(Error::Expired)
         ));
     }

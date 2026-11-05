@@ -9,7 +9,7 @@ pub(super) struct Frame;
 
 impl Frame {
     pub(super) const SEALED: u8 = 1;
-    pub(super) const HANDSHAKE: u8 = 2;
+    pub(super) const REQUEST: u8 = 3;
 }
 
 pub(super) fn mac(key: &[u8; 32], parts: &[&[u8]]) -> [u8; 32] {
@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn derives_vector_keys() {
         let vectors = vectors::load();
-        let key = bytes(&vectors.handshake.session_key);
+        let key = bytes(&vectors.prekey.session_key);
         assert_eq!(
             hex::encode(Direction::Request.derive_key(&key)),
             vectors.request_key
@@ -110,7 +110,7 @@ mod tests {
     #[test]
     fn matches_vector_messages() {
         let vectors = vectors::load();
-        let key = bytes(&vectors.handshake.session_key);
+        let key = bytes(&vectors.prekey.session_key);
         for message in vectors.messages {
             let cipher = Cipher::new(&key, message.direction);
             let aad = vectors.connector_id.as_bytes();

@@ -6,10 +6,11 @@ import { createServer } from 'node:net';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import sodium from 'libsodium-wrappers';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { hashToken } from '../src/lib/server/tokens';
 import { connector, session, user } from '../src/lib/server/db/schema';
-import { createChannel, handshakeFrame } from '../src/lib/protocol/channel';
+import { createChannel, requestHeader } from '../src/lib/protocol/channel';
 import { ConnectorError, createClient, RelayError } from '../src/lib/protocol/client';
 import type { Column } from '../src/lib/protocol/bindings/Column';
 import { deriveWrappingKey } from '../src/lib/vault/argon2';
@@ -122,10 +123,10 @@ const startConnector = (overrides: Record<string, string> = {}) =>
 		...overrides
 	});
 
-const post = (frame: Uint8Array, sessionId: string, cookie = ownerCookie) =>
+const post = (frame: Uint8Array, cookie = ownerCookie) =>
 	fetch(`http://127.0.0.1:${port}/v1/connectors/${credentials.id}/rpc`, {
 		method: 'POST',
-		headers: { 'content-type': 'application/octet-stream', 'x-session-id': sessionId, cookie },
+		headers: { 'content-type': 'application/octet-stream', cookie },
 		body: new Uint8Array(frame)
 	});
 
@@ -134,17 +135,19 @@ const getPrekey = (cookie = ownerCookie) =>
 		headers: { cookie }
 	});
 
-const connect = (key = credentials.key) =>
-	createChannel(key, credentials.id, async (sessionId, frame) => {
-		const response = await post(frame, sessionId);
-		expect(response.status).toBe(200);
-		return new Uint8Array(await response.arrayBuffer());
-	});
+const fetchPrekey = async () => {
+	const response = await getPrekey();
+	expect(response.status).toBe(200);
+	return new Uint8Array(await response.arrayBuffer());
+};
+
+const connect = async (key = credentials.key) =>
+	createChannel(key, credentials.id, await fetchPrekey());
 
 const send = async (body: unknown, key = credentials.key) => {
 	const channel = await connect(key);
 	const { id, sealed } = channel.sealRequest(body);
-	const response = await post(sealed, channel.sessionId);
+	const response = await post(sealed);
 	return {
 		response,
 		open: async () => channel.openResponse(id, new Uint8Array(await response.arrayBuffer()))
@@ -196,6 +199,7 @@ beforeAll(async () => {
 		.values({ userId: owner.userId, name: 'e2e', tokenHash: hashToken(token) })
 		.returning({ id: connector.id });
 	credentials = { id: row.id, token, key: randomBytes(32) };
+	await sodium.ready;
 	port = await freePort();
 	await startRelay();
 });
@@ -216,7 +220,7 @@ describe('relay', () => {
 		await startConnector().waitFor('Connected to relay');
 		const channel = await connect();
 		const { sealed } = channel.sealRequest({ type: 'hello' });
-		expect((await post(sealed, channel.sessionId, '')).status).toBe(401);
+		expect((await post(sealed, '')).status).toBe(401);
 		expect((await getPrekey('')).status).toBe(401);
 	});
 
@@ -224,16 +228,16 @@ describe('relay', () => {
 		await startConnector().waitFor('Connected to relay');
 		const channel = await connect();
 		const { sealed } = channel.sealRequest({ type: 'hello' });
-		expect((await post(sealed, channel.sessionId, strangerCookie)).status).toBe(404);
+		expect((await post(sealed, strangerCookie)).status).toBe(404);
 		expect((await getPrekey(strangerCookie)).status).toBe(404);
 	});
 
 	it('reports connectors that are not connected as offline', async () => {
-		expect((await post(new Uint8Array(33), randomUUID())).status).toBe(503);
+		expect((await post(new Uint8Array(65))).status).toBe(503);
 		expect((await getPrekey()).status).toBe(503);
 	});
 
-	it('answers hello end to end', async () => {
+	it('answers hello end to end with the published prekey', async () => {
 		await startConnector().waitFor('Connected to relay');
 		const { response, open } = await hello();
 		expect(response.status).toBe(200);
@@ -515,7 +519,7 @@ describe('relay', () => {
 		await startConnector().waitFor('Connected to relay');
 		const channel = await connect();
 		const { id, sealed } = channel.sealRequest({ type: 'teleport' });
-		const response = await post(sealed, channel.sessionId);
+		const response = await post(sealed);
 		expect(channel.openResponse(id, new Uint8Array(await response.arrayBuffer()))).toMatchObject({
 			type: 'error'
 		});
@@ -532,24 +536,34 @@ describe('relay', () => {
 		await startConnector().waitFor('Connected to relay');
 		const channel = await connect();
 		const { sealed } = channel.sealRequest({ type: 'hello' });
-		expect((await post(sealed, channel.sessionId)).status).toBe(200);
-		const replay = await post(sealed, channel.sessionId);
+		expect((await post(sealed)).status).toBe(200);
+		const replay = await post(sealed);
 		expect(replay.status).toBe(422);
 		expect(await replay.json()).toEqual({ rejection: 'REPLAYED' });
 	});
 
-	it('rejects requests for sessions the connector has not opened', async () => {
+	it('rejects requests sealed to a prekey the connector does not hold', async () => {
 		await startConnector().waitFor('Connected to relay');
-		const channel = await connect();
-		const { sealed } = channel.sealRequest({ type: 'hello' });
-		const response = await post(sealed, randomUUID());
+		const unknown = sodium.crypto_scalarmult_base(sodium.randombytes_buf(32));
+		const channel = await createChannel(credentials.key, credentials.id, unknown);
+		const response = await post(channel.sealRequest({ type: 'hello' }).sealed);
 		expect(response.status).toBe(422);
-		expect(await response.json()).toEqual({ rejection: 'UNKNOWN_SESSION' });
+		expect(await response.json()).toEqual({ rejection: 'STALE_KEY' });
 	});
 
-	it('rejects malformed handshakes', async () => {
+	it.each([
+		['truncated', async () => Uint8Array.of(3, 1, 2, 3)],
+		[
+			'low-order browser key',
+			async () => {
+				const { sealed } = (await connect()).sealRequest({ type: 'hello' });
+				const header = requestHeader(sealed.subarray(1, 33), new Uint8Array(32));
+				return new Uint8Array([...header, ...sealed.subarray(header.length)]);
+			}
+		]
+	])('rejects %s request frames', async (_, frame) => {
 		await startConnector().waitFor('Connected to relay');
-		const response = await post(handshakeFrame(Uint8Array.of(1, 2, 3)), randomUUID());
+		const response = await post(await frame());
 		expect(response.status).toBe(422);
 		expect(await response.json()).toEqual({ rejection: 'MALFORMED' });
 	});
@@ -678,7 +692,7 @@ describe('browser client', () => {
 		]);
 	});
 
-	it('opens a new session when the connector restarts', async () => {
+	it('fetches a fresh prekey when the connector restarts', async () => {
 		const first = startConnector();
 		await first.waitFor('Connected to relay');
 		const client = browserClient();

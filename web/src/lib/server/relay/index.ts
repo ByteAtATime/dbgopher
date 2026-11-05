@@ -136,7 +136,7 @@ const createRelay = () => {
 		return true;
 	};
 
-	const rpc = (connectorId: string, sessionId: string, sealed: Uint8Array) =>
+	const rpc = (connectorId: string, sealed: Uint8Array) =>
 		new Promise<RpcResult>((resolve) => {
 			const connection = connections.get(connectorId);
 			if (!connection) return resolve({ status: 'offline' });
@@ -150,7 +150,7 @@ const createRelay = () => {
 			connection.pending.set(id, settle);
 			send(connection.socket, {
 				case: 'request',
-				value: create(RequestSchema, { id, sessionId, sealed })
+				value: create(RequestSchema, { id, sealed })
 			});
 		});
 

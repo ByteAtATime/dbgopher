@@ -7,69 +7,59 @@ import {
 	deriveKey,
 	deriveSessionKey,
 	encode,
-	handshakeFrame,
 	open,
-	seal,
-	type Exchange
+	requestHeader,
+	seal
 } from './channel';
 
-const { handshake } = vectors;
+const { prekey } = vectors;
+const HEADER_LENGTH = 65;
 const connectorKey = () => sodium.from_hex(vectors.connectorKey);
+const prekeyPublic = () => sodium.from_hex(prekey.prekeyPublic);
 const aad = () => new TextEncoder().encode(vectors.connectorId);
 
 beforeAll(() => sodium.ready);
 
-const connector = () => {
-	const exchanges: { sessionId: string; frame: Uint8Array }[] = [];
-	const exchange: Exchange = async (sessionId, frame) => {
-		exchanges.push({ sessionId, frame });
-		return sodium.from_hex(handshake.connectorPublic);
+const connect = (connectorId = vectors.connectorId) =>
+	createChannel(connectorKey(), connectorId, prekeyPublic());
+
+const connectorKeys = (sealed: Uint8Array) => {
+	const browserPublic = sealed.subarray(33, HEADER_LENGTH);
+	const sessionKey = deriveSessionKey(
+		connectorKey(),
+		browserPublic,
+		prekeyPublic(),
+		sodium.crypto_scalarmult(sodium.from_hex(prekey.prekeySecret), browserPublic)
+	);
+	return {
+		request: deriveKey(sessionKey, 'dbgopher/request'),
+		response: deriveKey(sessionKey, 'dbgopher/response')
 	};
-	const keys = () => {
-		const [{ sessionId, frame }] = exchanges;
-		const browserPublic = frame.subarray(1);
-		const sessionKey = deriveSessionKey(
-			connectorKey(),
-			sessionId,
-			browserPublic,
-			sodium.from_hex(handshake.connectorPublic),
-			sodium.crypto_scalarmult(sodium.from_hex(handshake.connectorSecret), browserPublic)
-		);
-		return {
-			request: deriveKey(sessionKey, 'dbgopher/request'),
-			response: deriveKey(sessionKey, 'dbgopher/response')
-		};
-	};
-	return { exchange, exchanges, keys };
 };
 
 describe('vectors', () => {
-	it('derives the session key from the handshake', () => {
-		const browserSecret = sodium.from_hex(handshake.browserSecret);
-		const connectorPublic = sodium.from_hex(handshake.connectorPublic);
-		expect(sodium.to_hex(sodium.crypto_scalarmult_base(browserSecret))).toBe(
-			handshake.browserPublic
-		);
-		const shared = sodium.crypto_scalarmult(browserSecret, connectorPublic);
-		expect(sodium.to_hex(shared)).toBe(handshake.shared);
+	it('derives the session key from the prekey', () => {
+		const browserSecret = sodium.from_hex(prekey.browserSecret);
+		expect(sodium.to_hex(sodium.crypto_scalarmult_base(browserSecret))).toBe(prekey.browserPublic);
+		const shared = sodium.crypto_scalarmult(browserSecret, prekeyPublic());
+		expect(sodium.to_hex(shared)).toBe(prekey.shared);
 		const sessionKey = deriveSessionKey(
 			connectorKey(),
-			handshake.sessionId,
-			sodium.from_hex(handshake.browserPublic),
-			connectorPublic,
+			sodium.from_hex(prekey.browserPublic),
+			prekeyPublic(),
 			shared
 		);
-		expect(sodium.to_hex(sessionKey)).toBe(handshake.sessionKey);
+		expect(sodium.to_hex(sessionKey)).toBe(prekey.sessionKey);
 	});
 
-	it('encodes the handshake frame', () => {
-		expect(sodium.to_hex(handshakeFrame(sodium.from_hex(handshake.browserPublic)))).toBe(
-			handshake.frame
-		);
+	it('encodes the request header', () => {
+		expect(
+			sodium.to_hex(requestHeader(prekeyPublic(), sodium.from_hex(prekey.browserPublic)))
+		).toBe(prekey.header);
 	});
 
 	it('derives the per-direction keys', () => {
-		const sessionKey = sodium.from_hex(handshake.sessionKey);
+		const sessionKey = sodium.from_hex(prekey.sessionKey);
 		expect(sodium.to_hex(deriveKey(sessionKey, 'dbgopher/request'))).toBe(vectors.requestKey);
 		expect(sodium.to_hex(deriveKey(sessionKey, 'dbgopher/response'))).toBe(vectors.responseKey);
 	});
@@ -87,48 +77,41 @@ describe('vectors', () => {
 });
 
 describe('createChannel', () => {
-	it('opens a fresh session with an ephemeral key', async () => {
-		const first = connector();
-		const second = connector();
-		const channel = await createChannel(connectorKey(), vectors.connectorId, first.exchange);
-		await createChannel(connectorKey(), vectors.connectorId, second.exchange);
-		const [{ sessionId, frame }] = first.exchanges;
-		expect(channel.sessionId).toBe(sessionId);
-		expect(sodium.to_hex(frame)).toBe(sodium.to_hex(handshakeFrame(frame.subarray(1))));
-		expect(second.exchanges[0].sessionId).not.toBe(sessionId);
-		expect(second.exchanges[0].frame).not.toEqual(frame);
-	});
-
-	it('seals requests the connector can open', async () => {
-		const { exchange, keys } = connector();
-		const channel = await createChannel(connectorKey(), vectors.connectorId, exchange);
-		const { id, sealed } = channel.sealRequest({ message: 'hello' });
-		expect(decode(open(keys().request, aad(), sealed))).toMatchObject({
-			id,
+	it('seals requests the connector can open under a fresh ephemeral key', async () => {
+		const first = (await connect()).sealRequest({ message: 'hello' });
+		const second = (await connect()).sealRequest({ message: 'hello' });
+		const header = first.sealed.subarray(0, HEADER_LENGTH);
+		expect(sodium.to_hex(header)).toBe(
+			sodium.to_hex(requestHeader(prekeyPublic(), header.subarray(33)))
+		);
+		expect(second.sealed.subarray(0, HEADER_LENGTH)).not.toEqual(header);
+		const request = connectorKeys(first.sealed).request;
+		expect(decode(open(request, aad(), first.sealed.subarray(HEADER_LENGTH)))).toMatchObject({
+			id: first.id,
 			body: { message: 'hello' }
 		});
 	});
 
 	it('opens responses only for the request they answer', async () => {
-		const { exchange, keys } = connector();
-		const channel = await createChannel(connectorKey(), vectors.connectorId, exchange);
+		const channel = await connect();
+		const { sealed } = channel.sealRequest({ message: 'hello' });
 		const envelope = { id: crypto.randomUUID(), sentAt: Date.now(), body: 'pong' };
-		const sealed = seal(keys().response, aad(), encode(envelope));
-		expect(channel.openResponse(envelope.id, sealed)).toBe('pong');
-		expect(() => channel.openResponse(crypto.randomUUID(), sealed)).toThrow();
+		const response = seal(connectorKeys(sealed).response, aad(), encode(envelope));
+		expect(channel.openResponse(envelope.id, response)).toBe('pong');
+		expect(() => channel.openResponse(crypto.randomUUID(), response)).toThrow();
 	});
 
 	it('rejects responses sealed for another connector', async () => {
-		const { exchange, keys } = connector();
-		const channel = await createChannel(connectorKey(), 'another-connector', exchange);
+		const channel = await connect('another-connector');
+		const { sealed } = channel.sealRequest({ message: 'hello' });
 		const envelope = { id: crypto.randomUUID(), sentAt: Date.now(), body: 'pong' };
-		const sealed = seal(keys().response, aad(), encode(envelope));
-		expect(() => channel.openResponse(envelope.id, sealed)).toThrow();
+		const response = seal(connectorKeys(sealed).response, aad(), encode(envelope));
+		expect(() => channel.openResponse(envelope.id, response)).toThrow();
 	});
 
-	it('rejects low-order connector keys', async () => {
+	it('rejects low-order prekeys', async () => {
 		await expect(
-			createChannel(connectorKey(), vectors.connectorId, async () => new Uint8Array(32))
+			createChannel(connectorKey(), vectors.connectorId, new Uint8Array(32))
 		).rejects.toThrow();
 	});
 

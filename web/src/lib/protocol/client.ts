@@ -21,7 +21,7 @@ export type RelayErrorReason =
 	| 'undecryptable'
 	| 'expired'
 	| 'replayed'
-	| 'unknownSession'
+	| 'staleKey'
 	| 'malformed'
 	| 'rejected'
 	| 'unexpected';
@@ -133,7 +133,7 @@ const REJECTIONS = new Map<string, [RelayErrorReason, string]>([
 		]
 	],
 	['REPLAYED', ['replayed', 'The connector rejected the request as a replay.']],
-	['UNKNOWN_SESSION', ['unknownSession', REJECTED]],
+	['STALE_KEY', ['staleKey', REJECTED]],
 	['MALFORMED', ['malformed', 'The connector could not read the request. It may need updating.']]
 ]);
 
@@ -161,22 +161,31 @@ export const createClient = ({
 	connectorKey,
 	fetch = globalThis.fetch
 }: ClientOptions) => {
-	const post = async (sessionId: string, frame: Uint8Array) => {
-		const response = await fetch(`/v1/connectors/${encodeURIComponent(connectorId)}/rpc`, {
-			method: 'POST',
-			headers: { 'content-type': 'application/octet-stream', 'x-session-id': sessionId },
-			body: new Uint8Array(frame)
-		}).catch(() => {
+	const relay = async (path: string, init: RequestInit) => {
+		const response = await fetch(
+			`/v1/connectors/${encodeURIComponent(connectorId)}/${path}`,
+			init
+		).catch(() => {
 			throw new RelayError('unreachable', 'Could not reach the relay.');
 		});
 		if (!response.ok) throw await toRelayError(response);
 		return new Uint8Array(await response.arrayBuffer());
 	};
 
+	const post = (sealed: Uint8Array) =>
+		relay('rpc', {
+			method: 'POST',
+			headers: { 'content-type': 'application/octet-stream' },
+			body: new Uint8Array(sealed)
+		});
+
 	let channel: ReturnType<typeof createChannel> | undefined;
 
-	const connect = () => {
-		const pending = createChannel(connectorKey, connectorId, post);
+	const open = async (known?: Uint8Array) =>
+		createChannel(connectorKey, connectorId, known ?? (await relay('prekey', { method: 'GET' })));
+
+	const connect = (known?: Uint8Array) => {
+		const pending = open(known);
 		channel = pending;
 		pending.catch(() => {
 			if (channel === pending) channel = undefined;
@@ -186,13 +195,12 @@ export const createClient = ({
 
 	const send = async (body: Request, retry = true): Promise<unknown> => {
 		const pending = channel ?? connect();
-		const { sessionId, sealRequest, openResponse } = await pending;
+		const { sealRequest, openResponse } = await pending;
 		const { id, sealed } = sealRequest(body);
 		try {
-			return openResponse(id, await post(sessionId, sealed));
+			return openResponse(id, await post(sealed));
 		} catch (error) {
-			if (!retry || !(error instanceof RelayError) || error.reason !== 'unknownSession')
-				throw error;
+			if (!retry || !(error instanceof RelayError) || error.reason !== 'staleKey') throw error;
 			if (channel === pending) channel = undefined;
 			return send(body, false);
 		}
