@@ -42,5 +42,10 @@ export const createBrowseCache = ({ load, ttl, now = Date.now }: CacheOptions) =
 		return request;
 	};
 
-	return { get, fetch };
+	const set = (options: BrowseOptions, rows: Browse) => {
+		const key = browseKey(options);
+		if (!pending.has(key)) entries.set(key, { rows, at: now() });
+	};
+
+	return { get, fetch, set };
 };

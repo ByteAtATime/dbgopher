@@ -3,6 +3,7 @@ import type { Capability } from './bindings/Capability';
 import type { Cell } from './bindings/Cell';
 import type { Column } from './bindings/Column';
 import type { ForeignKey } from './bindings/ForeignKey';
+import type { Index } from './bindings/Index';
 import type { Request } from './bindings/Request';
 import type { Response as ConnectorResponse } from './bindings/Response';
 import type { Table } from './bindings/Table';
@@ -12,6 +13,9 @@ export type Hello = Extract<ConnectorResponse, { type: 'hello' }>;
 export type Overview = Extract<ConnectorResponse, { type: 'overview' }>;
 export type Browse = z.output<typeof browseSchema>;
 export type BrowseOptions = Omit<Extract<Request, { type: 'browse' }>, 'type'>;
+export type SearchOptions = Omit<Extract<Request, { type: 'search' }>, 'type'>;
+export type Search = z.output<typeof searchSchema>;
+export type ProbeOutcome = Search['results'][number];
 
 export type RelayErrorReason =
 	| 'unreachable'
@@ -52,7 +56,7 @@ export type ClientOptions = {
 	fetch?: Fetch;
 };
 
-const CAPABILITIES = ['overview', 'browse'] as const satisfies readonly Capability[];
+const CAPABILITIES = ['overview', 'browse', 'search'] as const satisfies readonly Capability[];
 
 const isCapability = (value: string): value is Capability =>
 	CAPABILITIES.some((capability) => capability === value);
@@ -73,6 +77,18 @@ const foreignKeySchema = z.object({
 	referencedColumns: z.array(z.string())
 }) satisfies z.ZodType<ForeignKey>;
 
+const indexSchema = z.object({
+	name: z.string(),
+	method: z.string(),
+	unique: z.boolean(),
+	partial: z.boolean(),
+	keyCount: z.number(),
+	column: z.string().nullable(),
+	expression: z.string().nullable(),
+	expressionType: z.string().nullable(),
+	operatorClass: z.string()
+}) satisfies z.ZodType<Index>;
+
 const tableSchema = z.object({
 	schema: z.string(),
 	name: z.string(),
@@ -82,7 +98,9 @@ const tableSchema = z.object({
 	totalBytes: z.number(),
 	columns: z.array(columnSchema),
 	primaryKey: z.array(z.string()),
-	foreignKeys: z.array(foreignKeySchema)
+	foreignKeys: z.array(foreignKeySchema),
+	indexes: z.array(indexSchema),
+	rowSecurity: z.boolean()
 }) satisfies z.ZodType<Table>;
 
 const helloSchema = z.object({
@@ -95,7 +113,10 @@ const helloSchema = z.object({
 
 const overviewSchema = z.object({
 	type: z.literal('overview'),
-	tables: z.array(tableSchema)
+	tables: z.array(tableSchema),
+	searchPath: z.array(z.string()),
+	restricted: z.array(z.object({ schema: z.string(), name: z.string() })),
+	fingerprint: z.string()
 }) satisfies z.ZodType<Overview>;
 
 const valueSchema = z.union([
@@ -108,6 +129,27 @@ const browseSchema = z.object({
 	columns: z.array(columnSchema),
 	rows: z.array(z.array(valueSchema.nullable()))
 }) satisfies z.ZodType<unknown, Extract<ConnectorResponse, { type: 'browse' }>>;
+
+const probeResultSchema = z.discriminatedUnion('type', [
+	z.object({
+		type: z.literal('rows'),
+		columns: z.array(z.string()),
+		hits: z.array(
+			z.object({ cells: z.array(valueSchema.nullable()), matched: z.array(z.boolean()) })
+		),
+		limit: z.number()
+	}),
+	z.object({ type: z.literal('timedOut') }),
+	z.object({ type: z.literal('denied') }),
+	z.object({ type: z.literal('cancelled') }),
+	z.object({ type: z.literal('failed'), message: z.string() })
+]);
+
+const searchSchema = z.object({
+	type: z.literal('search'),
+	fingerprint: z.string().nullable(),
+	results: z.array(probeResultSchema)
+}) satisfies z.ZodType<unknown, Extract<ConnectorResponse, { type: 'search' }>>;
 
 const errorSchema = z.object({
 	type: z.literal('error'),
@@ -226,7 +268,8 @@ export const createClient = ({
 	return {
 		hello: () => call({ type: 'hello' }, helloSchema),
 		overview: () => call({ type: 'overview' }, overviewSchema),
-		browse: (options: BrowseOptions) => call({ type: 'browse', ...options }, browseSchema)
+		browse: (options: BrowseOptions) => call({ type: 'browse', ...options }, browseSchema),
+		search: (options: SearchOptions) => call({ type: 'search', ...options }, searchSchema)
 	};
 };
 

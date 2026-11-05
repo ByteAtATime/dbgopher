@@ -1,6 +1,15 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { createConnection } from '#lib/connection.svelte.ts';
+	import { createPalette } from '#lib/palette.svelte.ts';
+	import { createHistory } from '#lib/search/history.ts';
+	import { tableLabel } from '#lib/search/preview.ts';
+	import type { Hit } from '#lib/search/rank.ts';
+	import SearchIcon from '@lucide/svelte/icons/search';
+	import { toast } from 'svelte-sonner';
+	import CommandPalette from './CommandPalette.svelte';
+	import * as Kbd from '#lib/components/ui/kbd/index.ts';
+	import { Toaster } from '#lib/components/ui/sonner/index.ts';
 	import type { Sort } from '#lib/protocol/bindings/Sort.ts';
 	import { RelayError } from '#lib/protocol/client.ts';
 	import { incomingReferences } from '#lib/references.ts';
@@ -11,14 +20,31 @@
 	import TableList from './TableList.svelte';
 	import { Alert, AlertTitle, AlertDescription } from '#lib/components/ui/alert/index.ts';
 
-	type Props = { connectorId: string; connectorKey: Uint8Array; prekey?: Uint8Array };
+	type Props = {
+		userId: string;
+		connectorId: string;
+		connectorKey: Uint8Array;
+		prekey?: Uint8Array;
+	};
 
 	const PAGE_SIZE = 50;
+	const APPLE = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? '');
 
-	let { connectorId, connectorKey, prekey }: Props = $props();
+	let { userId, connectorId, connectorKey, prekey }: Props = $props();
 
 	const connection = $derived(createConnection(connectorId, connectorKey, prekey));
 	$effect(() => connection.start());
+
+	const palette = $derived(
+		createPalette({
+			overview: () =>
+				connection.overview.type === 'loaded' ? connection.overview.overview : undefined,
+			search: (options) => connection.search(options),
+			reloadOverview: () => connection.reloadOverview(),
+			history: createHistory(`dbgopher:palette-history:${userId}:${connectorId}`)
+		})
+	);
+	let paletteOpen = $state(false);
 
 	const status = $derived(connection.status);
 	const overview = $derived(connection.overview);
@@ -61,16 +87,91 @@
 			? status.error.reason
 			: undefined
 	);
+	const searchable = $derived(
+		status.type === 'online' &&
+			status.hello.capabilities.includes('search') &&
+			overview.type === 'loaded'
+	);
+
+	const openHit = (hit: Hit, newTab: boolean) => {
+		palette.opened(hit);
+		const route = `#${formatRoute({ type: 'browse', schema: hit.table.schema, table: hit.table.name, filter: hit.filter })}`;
+		if (newTab) {
+			window.open(`${page.url.pathname}${page.url.search}${route}`, '_blank', 'noopener');
+			return;
+		}
+		const sameColumns =
+			hit.columns.length === hit.table.columns.length &&
+			hit.columns.every((name, index) => hit.table.columns[index]?.name === name);
+		if (hit.identity !== undefined && sameColumns) {
+			connection.seed(
+				{
+					schema: hit.table.schema,
+					table: hit.table.name,
+					filter: hit.filter,
+					limit: PAGE_SIZE,
+					offset: 0,
+					sort: undefined
+				},
+				{ type: 'browse', columns: hit.table.columns, rows: [hit.cells] }
+			);
+		}
+		paletteOpen = false;
+		window.location.hash = route;
+	};
+
+	const jump = (hit: Hit) => {
+		openHit(hit, false);
+		const tables = overview.type === 'loaded' ? overview.overview.tables : [];
+		toast(`Jumped to ${tableLabel(hit.table, tables)} #${hit.identity ?? ''}`, {
+			action: { label: 'Show all results', onClick: () => (paletteOpen = true) }
+		});
+	};
+
+	const onkeydown = (event: KeyboardEvent) => {
+		if (!searchable || event.key.toLowerCase() !== 'k' || !(event.metaKey || event.ctrlKey)) return;
+		event.preventDefault();
+		paletteOpen = !paletteOpen;
+	};
 </script>
+
+<svelte:window {onkeydown} />
+
+<Toaster position="bottom-center" />
+
+{#if searchable && overview.type === 'loaded'}
+	<CommandPalette
+		{palette}
+		tables={overview.overview.tables}
+		bind:open={paletteOpen}
+		onselect={openHit}
+		onjump={jump}
+	/>
+{/if}
 
 <div class="flex h-dvh">
 	<aside class="flex w-64 shrink-0 flex-col bg-sidebar">
-		<h2 class="px-4 pt-4 pb-2 text-sm font-semibold">
-			Tables
-			{#if overview.type === 'loaded'}
-				<span class="font-normal text-muted-foreground">({overview.overview.tables.length})</span>
+		<div class="flex items-center justify-between gap-2 pt-4 pr-2 pb-2 pl-4">
+			<h2 class="text-sm font-semibold">
+				Tables
+				{#if overview.type === 'loaded'}
+					<span class="font-normal text-muted-foreground">({overview.overview.tables.length})</span>
+				{/if}
+			</h2>
+			{#if searchable}
+				<button
+					type="button"
+					class="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+					onclick={() => (paletteOpen = true)}
+				>
+					<SearchIcon class="size-3.5" />
+					<Kbd.Group>
+						<Kbd.Root>{APPLE ? '⌘' : 'Ctrl'}</Kbd.Root>
+						<Kbd.Root>K</Kbd.Root>
+					</Kbd.Group>
+				</button>
 			{/if}
-		</h2>
+		</div>
 		<nav class="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
 			{#if overview.type === 'failed'}
 				<Alert variant="destructive">

@@ -2,5 +2,6 @@
 import type { Capability } from "./Capability";
 import type { Overview } from "./Overview";
 import type { Rows } from "./Rows";
+import type { SearchResults } from "./SearchResults";
 
-export type Response = { "type": "hello", protocolVersion: number, connectorVersion: string, capabilities: Array<Capability>, readOnly: boolean, } | { "type": "overview" } & Overview | { "type": "browse" } & Rows | { "type": "error", message: string, };
+export type Response = { "type": "hello", protocolVersion: number, connectorVersion: string, capabilities: Array<Capability>, readOnly: boolean, } | { "type": "overview" } & Overview | { "type": "browse" } & Rows | { "type": "search" } & SearchResults | { "type": "error", message: string, };

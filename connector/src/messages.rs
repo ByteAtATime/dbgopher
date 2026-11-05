@@ -4,6 +4,7 @@ use ts_rs::TS;
 use crate::browse::{self, Filter, Rows, Sort};
 use crate::database::Database;
 use crate::overview::{self, Overview};
+use crate::search::{Probe, SearchResults};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
@@ -33,6 +34,14 @@ pub enum Request {
         #[ts(optional)]
         filter: Option<Vec<Filter>>,
     },
+    Search {
+        palette: uuid::Uuid,
+        generation: u32,
+        #[serde(default)]
+        #[ts(optional)]
+        fingerprint: Option<bool>,
+        probes: Vec<Probe>,
+    },
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -51,6 +60,7 @@ pub enum Response {
     },
     Overview(Overview),
     Browse(Rows),
+    Search(SearchResults),
     Error {
         message: String,
     },
@@ -62,6 +72,7 @@ pub enum Response {
 pub enum Capability {
     Overview,
     Browse,
+    Search,
 }
 
 pub async fn handle(database: &Database, request: Request) -> Response {
@@ -69,11 +80,14 @@ pub async fn handle(database: &Database, request: Request) -> Response {
         Request::Hello => Response::Hello {
             protocol_version: PROTOCOL_VERSION,
             connector_version: env!("CARGO_PKG_VERSION").into(),
-            capabilities: vec![Capability::Overview, Capability::Browse],
+            capabilities: vec![Capability::Overview, Capability::Browse, Capability::Search],
             read_only: true,
         },
         Request::Overview => match database.read(overview::load).await {
-            Ok(overview) => Response::Overview(overview),
+            Ok(overview) => {
+                database.searcher().warm();
+                Response::Overview(overview)
+            }
             Err(error) => Response::Error {
                 message: error.describe(),
             },
@@ -109,5 +123,20 @@ pub async fn handle(database: &Database, request: Request) -> Response {
                 },
             }
         }
+        Request::Search {
+            palette,
+            generation,
+            fingerprint,
+            probes,
+        } => match database
+            .searcher()
+            .search(palette, generation, fingerprint.unwrap_or(false), &probes)
+            .await
+        {
+            Ok(results) => Response::Search(results),
+            Err(error) => Response::Error {
+                message: error.describe(),
+            },
+        },
     }
 }

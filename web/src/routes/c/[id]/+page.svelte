@@ -7,6 +7,7 @@
 	let { data }: PageProps = $props();
 
 	const connectorId = $derived(page.params.id ?? '');
+	const userId = $derived(data.user?.id ?? '');
 </script>
 
 {#if data.user}
@@ -14,7 +15,7 @@
 		{#snippet children(vault)}
 			{@const key = vault.connectorKey(connectorId)}
 			{#if key}
-				<Database {connectorId} connectorKey={key} prekey={data.prekey} />
+				<Database {userId} {connectorId} connectorKey={key} prekey={data.prekey} />
 			{:else}
 				<p class="mx-auto mt-24 max-w-md px-4 text-sm">Connector not found</p>
 			{/if}

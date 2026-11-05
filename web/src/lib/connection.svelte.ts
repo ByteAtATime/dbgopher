@@ -6,7 +6,8 @@ import {
 	type BrowseOptions,
 	type Client,
 	type Hello,
-	type Overview
+	type Overview,
+	type SearchOptions
 } from './protocol/client.ts';
 
 const POLL_INTERVAL_MS = 10_000;
@@ -77,6 +78,14 @@ export const createConnection = (
 		if (!stopped) overview = loaded;
 	};
 
+	let reloading: Promise<void> | undefined;
+
+	const reloadOverview = () =>
+		(reloading ??= load(client).then((loaded) => {
+			reloading = undefined;
+			if (!stopped && loaded.type === 'loaded') overview = loaded;
+		}));
+
 	const refresh = async () => {
 		const current = target;
 		if (!current) return;
@@ -115,6 +124,10 @@ export const createConnection = (
 								: undefined
 				};
 		void refresh();
+	};
+
+	const seed = (options: BrowseOptions, rows: Browse) => {
+		if (!cache.get(options)) cache.set(options, rows);
 	};
 
 	const prefetch = (options: BrowseOptions) => {
@@ -158,6 +171,9 @@ export const createConnection = (
 		},
 		select,
 		prefetch,
+		seed,
+		reloadOverview,
+		search: (options: SearchOptions) => client.search(options),
 		start
 	};
 };
