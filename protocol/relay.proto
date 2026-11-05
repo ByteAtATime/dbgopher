@@ -6,6 +6,7 @@ message ConnectorMessage {
   oneof message {
     Hello hello = 1;
     Response response = 2;
+    Prekey prekey = 3;
   }
 }
 
@@ -25,6 +26,10 @@ message Hello {
 }
 
 message Welcome {}
+
+message Prekey {
+  bytes public_key = 1;
+}
 
 message Close {
   enum Reason {

@@ -33,6 +33,7 @@ export type RpcResult =
 type Connection = {
 	socket: WebSocket;
 	pending: Map<bigint, (result: RpcResult) => void>;
+	prekey?: Uint8Array;
 };
 
 const decode = (data: RawData) => {
@@ -88,9 +89,14 @@ const createRelay = () => {
 
 		socket.on('message', (data) => {
 			const message = decode(data);
-			if (message?.case !== 'response') return;
-			const { requestId, result } = message.value;
-			connection.pending.get(requestId)?.(toRpcResult(result));
+			switch (message?.case) {
+				case 'response':
+					connection.pending.get(message.value.requestId)?.(toRpcResult(message.value.result));
+					break;
+				case 'prekey':
+					connection.prekey = message.value.publicKey.slice();
+					break;
+			}
 		});
 
 		socket.on('close', () => {
@@ -150,7 +156,9 @@ const createRelay = () => {
 
 	const isOnline = (connectorId: string) => connections.has(connectorId);
 
-	return { handleUpgrade, rpc, isOnline };
+	const prekey = (connectorId: string) => connections.get(connectorId)?.prekey;
+
+	return { handleUpgrade, rpc, isOnline, prekey };
 };
 
 export type Relay = ReturnType<typeof createRelay>;

@@ -129,6 +129,11 @@ const post = (frame: Uint8Array, sessionId: string, cookie = ownerCookie) =>
 		body: new Uint8Array(frame)
 	});
 
+const getPrekey = (cookie = ownerCookie) =>
+	fetch(`http://127.0.0.1:${port}/v1/connectors/${credentials.id}/prekey`, {
+		headers: { cookie }
+	});
+
 const connect = (key = credentials.key) =>
 	createChannel(key, credentials.id, async (sessionId, frame) => {
 		const response = await post(frame, sessionId);
@@ -212,19 +217,20 @@ describe('relay', () => {
 		const channel = await connect();
 		const { sealed } = channel.sealRequest({ type: 'hello' });
 		expect((await post(sealed, channel.sessionId, '')).status).toBe(401);
+		expect((await getPrekey('')).status).toBe(401);
 	});
 
 	it("hides connectors from users who don't own them", async () => {
 		await startConnector().waitFor('Connected to relay');
 		const channel = await connect();
 		const { sealed } = channel.sealRequest({ type: 'hello' });
-		const response = await post(sealed, channel.sessionId, strangerCookie);
-		expect(response.status).toBe(404);
+		expect((await post(sealed, channel.sessionId, strangerCookie)).status).toBe(404);
+		expect((await getPrekey(strangerCookie)).status).toBe(404);
 	});
 
 	it('reports connectors that are not connected as offline', async () => {
-		const response = await post(new Uint8Array(33), randomUUID());
-		expect(response.status).toBe(503);
+		expect((await post(new Uint8Array(33), randomUUID())).status).toBe(503);
+		expect((await getPrekey()).status).toBe(503);
 	});
 
 	it('answers hello end to end', async () => {
