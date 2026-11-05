@@ -41,10 +41,11 @@ const connector = (respond: (request: unknown) => unknown) => {
 		const envelope = { id: request.id, sentAt: Date.now(), body: respond(request.body) };
 		return new Response(seal(deriveKey(sessionKey, 'dbgopher/response'), aad, encode(envelope)));
 	};
-	return { fetch, calls, rotate };
+	return { fetch, calls, rotate, prekey: () => prekey };
 };
 
-const client = (fetch: Fetch) => createClient({ connectorId: CONNECTOR_ID, connectorKey, fetch });
+const client = (fetch: Fetch, prekey?: Uint8Array) =>
+	createClient({ connectorId: CONNECTOR_ID, connectorKey, prekey, fetch });
 
 const hello = {
 	type: 'hello',
@@ -55,6 +56,14 @@ const hello = {
 };
 
 describe('createClient', () => {
+	it('seals the first request to a seeded prekey without fetching it', async () => {
+		const { fetch, calls, prekey } = connector(() => hello);
+		const api = client(fetch, prekey());
+		await Promise.all([api.hello(), api.hello()]);
+		await api.hello();
+		expect(calls).toEqual([RPC, RPC, RPC]);
+	});
+
 	it('fetches the prekey once when none is seeded', async () => {
 		const { fetch, calls } = connector(() => hello);
 		const api = client(fetch);
@@ -64,12 +73,12 @@ describe('createClient', () => {
 	});
 
 	it('fetches a fresh prekey and retries once when the prekey is stale', async () => {
-		const { fetch, calls, rotate } = connector(() => hello);
-		const api = client(fetch);
+		const { fetch, calls, rotate, prekey } = connector(() => hello);
+		const api = client(fetch, prekey());
 		await api.hello();
 		rotate();
 		expect(await api.hello()).toEqual(hello);
-		expect(calls).toEqual([PREKEY, RPC, RPC, PREKEY, RPC]);
+		expect(calls).toEqual([RPC, RPC, PREKEY, RPC]);
 	});
 
 	it('gives up when a fresh prekey is also stale', async () => {
@@ -148,11 +157,9 @@ describe('createClient', () => {
 		['STALE_KEY', 'staleKey'],
 		['UNSPECIFIED', 'rejected']
 	])('maps the %s rejection to %s', async (rejection, reason) => {
-		const prekey = sodium.crypto_scalarmult_base(sodium.randombytes_buf(32));
-		const api = client(async (path) =>
-			path.endsWith('/prekey')
-				? new Response(new Uint8Array(prekey))
-				: Response.json({ rejection }, { status: 422 })
+		const api = client(
+			async () => Response.json({ rejection }, { status: 422 }),
+			sodium.crypto_scalarmult_base(sodium.randombytes_buf(32))
 		);
 		await expect(api.hello()).rejects.toMatchObject({ name: 'RelayError', reason });
 	});

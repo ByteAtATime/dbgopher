@@ -49,13 +49,17 @@ const browse = async (client: Client, options: BrowseOptions): Promise<BrowseRes
 	}
 };
 
-export const createConnection = (connectorId: string, connectorKey: Uint8Array) => {
+export const createConnection = (
+	connectorId: string,
+	connectorKey: Uint8Array,
+	prekey?: Uint8Array
+) => {
 	let status = $state<Status>({ type: 'connecting' });
 	let overview = $state<OverviewState>({ type: 'loading' });
 	let rows = $state<RowsState>({ type: 'loading' });
 	let target: BrowseOptions | undefined;
 	let validated: string | undefined;
-	const client = createClient({ connectorId, connectorKey });
+	const client = createClient({ connectorId, connectorKey, prekey });
 	const cache = createBrowseCache({
 		load: (options) => browse(client, options),
 		ttl: CACHE_TTL_MS

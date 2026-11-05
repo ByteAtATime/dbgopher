@@ -11,13 +11,13 @@
 	import TableList from './TableList.svelte';
 	import { Alert, AlertTitle, AlertDescription } from '#lib/components/ui/alert/index.ts';
 
-	type Props = { connectorId: string; connectorKey: Uint8Array };
+	type Props = { connectorId: string; connectorKey: Uint8Array; prekey?: Uint8Array };
 
 	const PAGE_SIZE = 50;
 
-	let { connectorId, connectorKey }: Props = $props();
+	let { connectorId, connectorKey, prekey }: Props = $props();
 
-	const connection = $derived(createConnection(connectorId, connectorKey));
+	const connection = $derived(createConnection(connectorId, connectorKey, prekey));
 	$effect(() => connection.start());
 
 	const status = $derived(connection.status);

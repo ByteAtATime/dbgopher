@@ -48,6 +48,7 @@ export type Fetch = (path: string, init: RequestInit) => Promise<Response>;
 export type ClientOptions = {
 	connectorId: string;
 	connectorKey: Uint8Array;
+	prekey?: Uint8Array;
 	fetch?: Fetch;
 };
 
@@ -159,6 +160,7 @@ const toRelayError = async (response: Response) => {
 export const createClient = ({
 	connectorId,
 	connectorKey,
+	prekey,
 	fetch = globalThis.fetch
 }: ClientOptions) => {
 	const relay = async (path: string, init: RequestInit) => {
@@ -192,6 +194,8 @@ export const createClient = ({
 		});
 		return pending;
 	};
+
+	if (prekey) connect(prekey);
 
 	const send = async (body: Request, retry = true): Promise<unknown> => {
 		const pending = channel ?? connect();
