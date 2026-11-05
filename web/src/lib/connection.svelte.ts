@@ -1,3 +1,4 @@
+import { untrack } from 'svelte';
 import { browseKey, createBrowseCache, type BrowseResult } from './browse-cache.ts';
 import {
 	createClient,
@@ -59,6 +60,7 @@ export const createConnection = (
 	let rows = $state<RowsState>({ type: 'loading' });
 	let target: BrowseOptions | undefined;
 	let validated: string | undefined;
+	let checking: Promise<Status> | undefined;
 	const client = createClient({ connectorId, connectorKey, prekey });
 	const cache = createBrowseCache({
 		load: (options) => browse(client, options),
@@ -66,12 +68,22 @@ export const createConnection = (
 	});
 	let stopped = false;
 
+	const online = async () => (await checking)?.type === 'online';
+
+	const loadOverview = async () => {
+		if (overview.type === 'loaded') return;
+		const loaded = await load(client);
+		if (loaded.type === 'failed' && !(await online())) return;
+		if (!stopped) overview = loaded;
+	};
+
 	const refresh = async () => {
 		const current = target;
-		if (!current || status.type !== 'online') return;
+		if (!current) return;
 		const key = browseKey(current);
 		if (rows.type === 'loaded' && validated === key) return;
 		const result = await cache.fetch(current);
+		if (result.type === 'failed' && !(await online())) return;
 		if (stopped || target !== current) return;
 		validated = key;
 		if (
@@ -114,20 +126,19 @@ export const createConnection = (
 		let timer: ReturnType<typeof setTimeout> | undefined;
 
 		const poll = async () => {
-			const next = await check(client);
-			if (stopped) return;
-			status = next;
-			if (status.type === 'online' && overview.type !== 'loaded') {
-				const loaded = await load(client);
-				if (stopped) return;
-				overview = loaded;
-			}
-			await refresh();
+			checking = check(client);
+			await Promise.all([
+				checking.then((next) => {
+					if (!stopped) status = next;
+				}),
+				loadOverview(),
+				refresh()
+			]);
 			if (stopped) return;
 			timer = setTimeout(poll, POLL_INTERVAL_MS);
 		};
 
-		void poll();
+		void untrack(poll);
 
 		return () => {
 			stopped = true;

@@ -81,6 +81,18 @@ describe('createClient', () => {
 		expect(calls).toEqual([RPC, RPC, PREKEY, RPC]);
 	});
 
+	it('fetches one fresh prekey when concurrent requests are all stale', async () => {
+		const { fetch, calls, rotate, prekey } = connector(() => hello);
+		const api = client(fetch, prekey());
+		rotate();
+		expect(await Promise.all([api.hello(), api.hello(), api.hello()])).toEqual([
+			hello,
+			hello,
+			hello
+		]);
+		expect(calls).toEqual([RPC, RPC, RPC, PREKEY, RPC, RPC, RPC]);
+	});
+
 	it('gives up when a fresh prekey is also stale', async () => {
 		const { fetch, calls, rotate } = connector(() => hello);
 		const api = client(async (path, init) => {
