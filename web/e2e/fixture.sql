@@ -53,6 +53,10 @@ INSERT INTO events VALUES (1, '2026-03-01'), (2, '2026-10-30');
 INSERT INTO readings SELECT id, repeat('x', 100) FROM generate_series(1, 200000) id;
 INSERT INTO audit."Event Log" VALUES (1, '{"type": "signup"}', decode(repeat('ab', 782), 'hex'));
 
+CREATE UNIQUE INDEX customers_email_lower ON customers (lower(email));
+CREATE INDEX orders_unnoted ON orders (customer_id, created_at) WHERE note IS NULL;
+CREATE INDEX event_log_payload ON audit."Event Log" USING gin ("Payload" jsonb_path_ops);
+
 CREATE VIEW recent_orders AS SELECT id, customer_id FROM orders WHERE id > 2;
 
 CREATE MATERIALIZED VIEW customer_totals AS

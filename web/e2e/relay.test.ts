@@ -13,6 +13,8 @@ import { connector, session, user } from '../src/lib/server/db/schema';
 import { createChannel, requestHeader } from '../src/lib/protocol/channel';
 import { ConnectorError, createClient, RelayError } from '../src/lib/protocol/client';
 import type { Column } from '../src/lib/protocol/bindings/Column';
+import type { Index } from '../src/lib/protocol/bindings/Index';
+import type { IndexKey } from '../src/lib/protocol/bindings/IndexKey';
 import { deriveWrappingKey } from '../src/lib/vault/argon2';
 import { createVault, unlockAccountKey } from '../src/lib/vault/crypto';
 
@@ -185,6 +187,21 @@ const column = (
 	flags: Partial<Pick<Column, 'nullable' | 'hasDefault'>> = {}
 ): Column => ({ name, typeOid, typeName, nullable: false, hasDefault: false, ...flags });
 
+const keyColumn = (name: string, operatorClass: string): IndexKey => ({
+	kind: 'column',
+	name,
+	operatorClass
+});
+
+const index = (
+	name: string,
+	keys: IndexKey[],
+	flags: Partial<Pick<Index, 'method' | 'unique' | 'partial'>> = {}
+): Index => ({ name, method: 'btree', unique: false, partial: false, keys, ...flags });
+
+const primaryKey = (table: string, keys: IndexKey[]) =>
+	index(`${table}_pkey`, keys, { unique: true });
+
 beforeAll(async () => {
 	if (!DATABASE_URL) throw new Error('DATABASE_URL is not set');
 	client = postgres(DATABASE_URL);
@@ -256,6 +273,9 @@ describe('relay', () => {
 		expect(response.status).toBe(200);
 		expect(await open()).toEqual({
 			type: 'overview',
+			searchPath: ['public'],
+			fingerprint: expect.stringMatching(/^[0-9a-f]{32}$/),
+			unreadableTables: [],
 			tables: [
 				{
 					schema: 'audit',
@@ -270,7 +290,11 @@ describe('relay', () => {
 						column('Attachment', 'bytea', 17, { nullable: true })
 					],
 					primaryKey: ['id'],
-					foreignKeys: []
+					foreignKeys: [],
+					indexes: [
+						primaryKey('Event Log', [keyColumn('id', 'int4_ops')]),
+						index('event_log_payload', [keyColumn('Payload', 'jsonb_path_ops')], { method: 'gin' })
+					]
 				},
 				{
 					schema: 'public',
@@ -284,7 +308,8 @@ describe('relay', () => {
 						column('orders', 'bigint', 20, { nullable: true })
 					],
 					primaryKey: [],
-					foreignKeys: []
+					foreignKeys: [],
+					indexes: []
 				},
 				{
 					schema: 'public',
@@ -295,7 +320,23 @@ describe('relay', () => {
 					totalBytes: expect.any(Number),
 					columns: [column('id', 'integer', 23, { hasDefault: true }), column('email', 'text', 25)],
 					primaryKey: ['id'],
-					foreignKeys: []
+					foreignKeys: [],
+					indexes: [
+						index(
+							'customers_email_lower',
+							[
+								{
+									kind: 'expression',
+									definition: 'lower(email)',
+									typeOid: 25,
+									typeName: 'text',
+									operatorClass: 'text_ops'
+								}
+							],
+							{ unique: true }
+						),
+						primaryKey('customers', [keyColumn('id', 'int4_ops')])
+					]
 				},
 				{
 					schema: 'public',
@@ -306,7 +347,10 @@ describe('relay', () => {
 					totalBytes: expect.any(Number),
 					columns: [column('id', 'integer', 23), column('at', 'date', 1082)],
 					primaryKey: ['id', 'at'],
-					foreignKeys: []
+					foreignKeys: [],
+					indexes: [
+						primaryKey('events', [keyColumn('id', 'int4_ops'), keyColumn('at', 'date_ops')])
+					]
 				},
 				{
 					schema: 'public',
@@ -329,6 +373,12 @@ describe('relay', () => {
 							referencedTable: 'orders',
 							referencedColumns: ['id']
 						}
+					],
+					indexes: [
+						primaryKey('order_items', [
+							keyColumn('order_id', 'int8_ops'),
+							keyColumn('position', 'int4_ops')
+						])
 					]
 				},
 				{
@@ -353,6 +403,14 @@ describe('relay', () => {
 							referencedTable: 'customers',
 							referencedColumns: ['id']
 						}
+					],
+					indexes: [
+						primaryKey('orders', [keyColumn('id', 'int8_ops')]),
+						index(
+							'orders_unnoted',
+							[keyColumn('customer_id', 'int4_ops'), keyColumn('created_at', 'timestamptz_ops')],
+							{ partial: true }
+						)
 					]
 				},
 				{
@@ -364,7 +422,8 @@ describe('relay', () => {
 					totalBytes: expect.any(Number),
 					columns: [column('id', 'integer', 23), column('payload', 'text', 25)],
 					primaryKey: ['id'],
-					foreignKeys: []
+					foreignKeys: [],
+					indexes: [primaryKey('readings', [keyColumn('id', 'int4_ops')])]
 				},
 				{
 					schema: 'public',
@@ -378,7 +437,8 @@ describe('relay', () => {
 						column('customer_id', 'integer', 23, { nullable: true })
 					],
 					primaryKey: [],
-					foreignKeys: []
+					foreignKeys: [],
+					indexes: []
 				},
 				{
 					schema: 'public',
@@ -401,7 +461,8 @@ describe('relay', () => {
 							referencedTable: 'order_items',
 							referencedColumns: ['order_id', 'position']
 						}
-					]
+					],
+					indexes: [primaryKey('shipments', [keyColumn('id', 'uuid_ops')])]
 				}
 			]
 		});

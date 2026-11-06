@@ -2,7 +2,9 @@ import { z } from 'zod';
 import type { Capability } from './bindings/Capability';
 import type { Cell } from './bindings/Cell';
 import type { Column } from './bindings/Column';
+import type { UnreadableTable } from './bindings/UnreadableTable';
 import type { ForeignKey } from './bindings/ForeignKey';
+import type { Index } from './bindings/Index';
 import type { Request } from './bindings/Request';
 import type { Response as ConnectorResponse } from './bindings/Response';
 import type { Table } from './bindings/Table';
@@ -73,17 +75,51 @@ const foreignKeySchema = z.object({
 	referencedColumns: z.array(z.string())
 }) satisfies z.ZodType<ForeignKey>;
 
+const indexSchema = z.object({
+	name: z.string(),
+	method: z.string(),
+	unique: z.boolean(),
+	partial: z.boolean(),
+	keys: z.array(
+		z.discriminatedUnion('kind', [
+			z.object({ kind: z.literal('column'), name: z.string(), operatorClass: z.string() }),
+			z.object({
+				kind: z.literal('expression'),
+				definition: z.string(),
+				typeOid: z.number(),
+				typeName: z.string(),
+				operatorClass: z.string()
+			})
+		])
+	)
+}) satisfies z.ZodType<Index>;
+
+const tableKindSchema = z.enum([
+	'table',
+	'partitionedTable',
+	'view',
+	'materializedView',
+	'foreignTable'
+]);
+
 const tableSchema = z.object({
 	schema: z.string(),
 	name: z.string(),
-	kind: z.enum(['table', 'partitionedTable', 'view', 'materializedView', 'foreignTable']),
+	kind: tableKindSchema,
 	rowCount: z.number().nullable(),
 	rowCountExact: z.boolean(),
 	totalBytes: z.number(),
 	columns: z.array(columnSchema),
 	primaryKey: z.array(z.string()),
-	foreignKeys: z.array(foreignKeySchema)
+	foreignKeys: z.array(foreignKeySchema),
+	indexes: z.array(indexSchema)
 }) satisfies z.ZodType<Table>;
+
+const unreadableTableSchema = z.object({
+	schema: z.string(),
+	name: z.string(),
+	kind: tableKindSchema
+}) satisfies z.ZodType<UnreadableTable>;
 
 const helloSchema = z.object({
 	type: z.literal('hello'),
@@ -95,7 +131,10 @@ const helloSchema = z.object({
 
 const overviewSchema = z.object({
 	type: z.literal('overview'),
-	tables: z.array(tableSchema)
+	searchPath: z.array(z.string()),
+	fingerprint: z.string(),
+	tables: z.array(tableSchema),
+	unreadableTables: z.array(unreadableTableSchema)
 }) satisfies z.ZodType<Overview>;
 
 const valueSchema = z.union([

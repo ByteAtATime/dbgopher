@@ -14,7 +14,8 @@ const table = (schema: string, name: string, foreignKeys: Omit<ForeignKey, 'name
 		totalBytes: 0,
 		columns: [],
 		primaryKey: [],
-		foreignKeys: foreignKeys.map((key) => ({ name: key.columns.join('_'), ...key }))
+		foreignKeys: foreignKeys.map((key) => ({ name: key.columns.join('_'), ...key })),
+		indexes: []
 	}) satisfies Table;
 
 const to = (referencedTable: string, columns: string[], referencedColumns = ['id']) => ({
