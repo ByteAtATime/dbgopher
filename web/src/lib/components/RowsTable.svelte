@@ -9,6 +9,8 @@
 	} from '@svar-ui/svelte-grid';
 	import BugIcon from '@lucide/svelte/icons/bug';
 	import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
+	import { toast } from 'svelte-sonner';
+	import { selectedText, toHtml, toTsv } from '#lib/clipboard.ts';
 	import type { Column } from '#lib/protocol/bindings/Column.ts';
 	import type { Filter } from '#lib/protocol/bindings/Filter.ts';
 	import type { Sort } from '#lib/protocol/bindings/Sort.ts';
@@ -161,6 +163,34 @@
 			}
 	);
 
+	const editingText = () => {
+		const active = document.activeElement;
+		const selection = window.getSelection();
+		return (
+			(selection !== null && !selection.isCollapsed) ||
+			(active instanceof HTMLElement &&
+				(active.isContentEditable || active.matches('input, textarea, select')))
+		);
+	};
+
+	const copy = (event: ClipboardEvent) => {
+		if (!rows || !bounds || !event.clipboardData || editingText()) return;
+		const range = {
+			top: bounds.top - 1,
+			bottom: Math.min(bounds.bottom, rows.rows.length) - 1,
+			left: bounds.left - 1,
+			right: Math.min(bounds.right, headers.length) - 1
+		};
+		if (range.top > range.bottom || range.left > range.right) return;
+		const grid = selectedText(rows, range);
+		event.preventDefault();
+		event.clipboardData.setData('text/plain', toTsv(grid));
+		event.clipboardData.setData('text/html', toHtml(grid));
+		toast.success(`Copied ${grid.length} × ${range.right - range.left + 1} cells`, {
+			id: 'copy-selection'
+		});
+	};
+
 	const cellStyle = (row: IRow, column: IColumn) => {
 		const r = Number(row.id);
 		const c = Number(column.id);
@@ -183,7 +213,7 @@
 	);
 </script>
 
-<svelte:window onmouseup={() => (dragging = false)} />
+<svelte:window onmouseup={() => (dragging = false)} oncopy={copy} />
 
 <div
 	class={[
