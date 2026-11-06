@@ -6,6 +6,7 @@
 	import { incomingReferences } from '#lib/references.ts';
 	import { formatRoute, parseRoute } from '#lib/route.ts';
 	import XIcon from '@lucide/svelte/icons/x';
+	import CommandPalette from './CommandPalette.svelte';
 	import Pagination from './Pagination.svelte';
 	import RowsTable from './RowsTable.svelte';
 	import TableList from './TableList.svelte';
@@ -173,3 +174,5 @@
 		{/if}
 	</main>
 </div>
+
+<CommandPalette />
