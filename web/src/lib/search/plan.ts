@@ -17,7 +17,6 @@ export type Target = {
 	value: string;
 	candidate: Candidate;
 	access: Access;
-	partialKey: boolean;
 	scoped: boolean;
 };
 
@@ -45,7 +44,7 @@ export const tier = (access: Access): Tier => {
 	return access === 'none' ? 'C' : 'B';
 };
 
-const singular = (word: string) =>
+export const singular = (word: string) =>
 	word
 		.toLowerCase()
 		.replace(/ies$/, 'y')
@@ -119,7 +118,6 @@ const binding = (candidate: Candidate, column: Column, access: Access) => {
 
 const tableTargets = (table: Table, candidates: Candidate[]) => {
 	const small = table.rowCount !== null && table.rowCount < SMALL_TABLE_ROWS;
-	const partialKeys = table.primaryKey.length > 1 ? table.primaryKey : [];
 	const targets: Target[] = [];
 	const skipped = new Set<string>();
 	for (const column of table.columns) {
@@ -142,7 +140,6 @@ const tableTargets = (table: Table, candidates: Candidate[]) => {
 				value: lower ? bound.value.toLowerCase() : bound.value,
 				candidate,
 				access,
-				partialKey: partialKeys.includes(column.name),
 				scoped: candidate.scope !== null && singular(candidate.scope) === singular(table.name)
 			});
 		}

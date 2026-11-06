@@ -8,7 +8,7 @@ export type Ranked<Row> = Hit<Row> & { score: number };
 export type Group<Row> = { schema: string; table: string; score: number; hits: Ranked<Row>[] };
 
 export type Decision<Row> =
-	| { kind: 'jump'; hit: Ranked<Row> }
+	| { kind: 'jump'; hit: Ranked<Row>; groups: Group<Row>[] }
 	| { kind: 'results'; groups: Group<Row>[]; pending: number; needsHint: boolean }
 	| { kind: 'none' };
 
@@ -71,10 +71,10 @@ export const decide = <Row>(targets: Target[], hits: Hit<Row>[]): Decision<Row> 
 	const tierA = ranked.filter(({ target }) => tier(target.access) === 'A');
 	const tierAComplete = pending.every(({ access }) => tier(access) !== 'A');
 	const singleTierARow = tierA.length === 1 && tierA[0].rows.length === 1;
-	if (top && strong(top.target) && singleTierARow && tierA[0] === top && tierAComplete)
-		return { kind: 'jump', hit: top };
-
 	const groups = group(ranked);
+	if (top && strong(top.target) && singleTierARow && tierA[0] === top && tierAComplete)
+		return { kind: 'jump', hit: top, groups };
+
 	const needsHint =
 		groups.length >= AMBIGUOUS_TABLES &&
 		!ranked.some(({ target }) => strong(target) || target.scoped);

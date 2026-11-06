@@ -16,7 +16,6 @@ const target = (table: string, overrides: Partial<Target> = {}): Target => ({
 	value: '42',
 	candidate: candidate(),
 	access: 'primaryKey',
-	partialKey: false,
 	scoped: false,
 	...overrides
 });
@@ -50,7 +49,15 @@ describe('decide', () => {
 		const orders = target('orders', { candidate: uuid, access: 'none' });
 		expect(decide([users, orders], [hit(users)])).toEqual({
 			kind: 'jump',
-			hit: { ...hit(users), score: expect.any(Number) }
+			hit: { ...hit(users), score: expect.any(Number) },
+			groups: [
+				{
+					schema: 'public',
+					table: 'users',
+					score: expect.any(Number),
+					hits: [{ ...hit(users), score: expect.any(Number) }]
+				}
+			]
 		});
 	});
 
@@ -80,8 +87,8 @@ describe('decide', () => {
 		expect(decide([orders], [hit(orders)])).toMatchObject({ kind: 'results' });
 	});
 
-	it('does not jump on a partial key', () => {
-		const events = target('events', { candidate: uuid, access: 'index', partialKey: true });
+	it('does not jump on a non-unique index', () => {
+		const events = target('events', { candidate: uuid, access: 'index' });
 		expect(decide([events], [hit(events)])).toMatchObject({ kind: 'results' });
 	});
 

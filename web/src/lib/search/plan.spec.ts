@@ -313,13 +313,13 @@ describe('plan', () => {
 		]);
 	});
 
-	it('flags members of a composite primary key as partial keys', () => {
+	it('searches a member of a composite primary key through its index', () => {
 		const events = table('events', [column('id', 'int4'), column('at', 'date')], {
 			kind: 'partitionedTable',
 			primaryKey: ['id', 'at']
 		});
 		expect(run('5', [events]).targets).toEqual([
-			expect.objectContaining({ column: 'id', access: 'index', partialKey: true })
+			expect.objectContaining({ column: 'id', access: 'index' })
 		]);
 	});
 

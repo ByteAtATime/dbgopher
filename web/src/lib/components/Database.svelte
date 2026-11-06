@@ -175,4 +175,7 @@
 	</main>
 </div>
 
-<CommandPalette />
+<CommandPalette
+	overview={overview.type === 'loaded' ? overview.overview : undefined}
+	search={connection.search}
+/>
