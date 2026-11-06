@@ -8,6 +8,7 @@ import {
 	type Hello,
 	type Overview
 } from './protocol/client.ts';
+import type { PaletteTarget } from './protocol/bindings/PaletteTarget.ts';
 
 const POLL_INTERVAL_MS = 10_000;
 const CACHE_TTL_MS = 5 * 60_000;
@@ -158,6 +159,7 @@ export const createConnection = (
 		},
 		select,
 		prefetch,
+		search: (targets: PaletteTarget[]) => client.palette(targets),
 		start
 	};
 };

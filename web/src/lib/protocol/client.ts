@@ -5,6 +5,8 @@ import type { Column } from './bindings/Column';
 import type { UnreadableTable } from './bindings/UnreadableTable';
 import type { ForeignKey } from './bindings/ForeignKey';
 import type { Index } from './bindings/Index';
+import type { PaletteOutcome } from './bindings/PaletteOutcome';
+import type { PaletteTarget } from './bindings/PaletteTarget';
 import type { Request } from './bindings/Request';
 import type { Response as ConnectorResponse } from './bindings/Response';
 import type { Table } from './bindings/Table';
@@ -13,6 +15,8 @@ import { createChannel } from './channel';
 export type Hello = Extract<ConnectorResponse, { type: 'hello' }>;
 export type Overview = Extract<ConnectorResponse, { type: 'overview' }>;
 export type Browse = z.output<typeof browseSchema>;
+export type Value = z.output<typeof valueSchema>;
+export type Palette = z.output<typeof paletteSchema>;
 export type BrowseOptions = Omit<Extract<Request, { type: 'browse' }>, 'type'>;
 
 export type RelayErrorReason =
@@ -54,7 +58,7 @@ export type ClientOptions = {
 	fetch?: Fetch;
 };
 
-const CAPABILITIES = ['overview', 'browse'] as const satisfies readonly Capability[];
+const CAPABILITIES = ['overview', 'browse', 'palette'] as const satisfies readonly Capability[];
 
 const isCapability = (value: string): value is Capability =>
 	CAPABILITIES.some((capability) => capability === value);
@@ -142,11 +146,27 @@ const valueSchema = z.union([
 	z.object({ bytes: z.number() }).transform(({ bytes }) => ({ kind: 'binary' as const, bytes }))
 ]) satisfies z.ZodType<unknown, Cell>;
 
-const browseSchema = z.object({
-	type: z.literal('browse'),
+const rowsShape = {
 	columns: z.array(columnSchema),
 	rows: z.array(z.array(valueSchema.nullable()))
+};
+
+const browseSchema = z.object({
+	type: z.literal('browse'),
+	...rowsShape
 }) satisfies z.ZodType<unknown, Extract<ConnectorResponse, { type: 'browse' }>>;
+
+const outcomeSchema = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('rows'), ...rowsShape }),
+	z.object({ kind: z.literal('timedOut') }),
+	z.object({ kind: z.literal('denied') }),
+	z.object({ kind: z.literal('failed'), message: z.string() })
+]) satisfies z.ZodType<unknown, PaletteOutcome>;
+
+const paletteSchema = z.object({
+	type: z.literal('palette'),
+	outcomes: z.array(outcomeSchema)
+}) satisfies z.ZodType<unknown, Extract<ConnectorResponse, { type: 'palette' }>>;
 
 const errorSchema = z.object({
 	type: z.literal('error'),
@@ -265,7 +285,8 @@ export const createClient = ({
 	return {
 		hello: () => call({ type: 'hello' }, helloSchema),
 		overview: () => call({ type: 'overview' }, overviewSchema),
-		browse: (options: BrowseOptions) => call({ type: 'browse', ...options }, browseSchema)
+		browse: (options: BrowseOptions) => call({ type: 'browse', ...options }, browseSchema),
+		palette: (targets: PaletteTarget[]) => call({ type: 'palette', targets }, paletteSchema)
 	};
 };
 

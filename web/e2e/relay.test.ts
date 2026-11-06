@@ -262,7 +262,7 @@ describe('relay', () => {
 			type: 'hello',
 			protocolVersion: 1,
 			connectorVersion: '0.1.0',
-			capabilities: ['overview', 'browse'],
+			capabilities: ['overview', 'browse', 'palette'],
 			readOnly: true
 		});
 	});
@@ -561,6 +561,83 @@ describe('relay', () => {
 			type: 'error',
 			message: expect.stringContaining('missing')
 		});
+	});
+
+	it('searches every palette target and reports each outcome', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const { response, open } = await send({
+			type: 'palette',
+			targets: [
+				{ schema: 'public', table: 'missing', column: 'id', value: '1' },
+				{
+					schema: 'public',
+					table: 'customers',
+					column: 'email',
+					comparison: 'lowerEqual',
+					value: 'Grace@Example.com'
+				},
+				{ schema: 'public', table: 'customers', column: 'email', value: 'Grace@Example.com' },
+				{ schema: 'public', table: 'orders', column: 'customer_id', value: '1' },
+				{ schema: 'public', table: 'orders', column: 'customer_id', value: 'one' }
+			]
+		});
+		expect(response.status).toBe(200);
+		expect(await open()).toEqual({
+			type: 'palette',
+			outcomes: [
+				{ kind: 'failed', message: expect.stringContaining('missing') },
+				{
+					kind: 'rows',
+					columns: [column('id', 'integer', 23, { hasDefault: true }), column('email', 'text', 25)],
+					rows: [['3', 'grace@example.com']]
+				},
+				{ kind: 'rows', columns: expect.any(Array), rows: [] },
+				{
+					kind: 'rows',
+					columns: expect.any(Array),
+					rows: [
+						['1', '1', null, expect.any(String)],
+						['2', '1', null, expect.any(String)]
+					]
+				},
+				{ kind: 'failed', message: expect.stringContaining('integer') }
+			]
+		});
+	});
+
+	it('reports palette targets denied to the database user', async () => {
+		const role = `palette_${randomBytes(4).toString('hex')}`;
+		const target = postgres(targetUrl);
+		await target.unsafe(`CREATE ROLE ${role} LOGIN PASSWORD '${role}'`);
+		try {
+			await target.unsafe(`GRANT SELECT (id) ON customers TO ${role}`);
+			await target.unsafe(`GRANT SELECT ON orders TO ${role}`);
+			const url = new URL(targetUrl);
+			url.username = role;
+			url.password = role;
+			const connector = startConnector({ DATABASE_URL: url.href });
+			await connector.waitFor('Connected to relay');
+			const { open } = await send({
+				type: 'palette',
+				targets: [
+					{ schema: 'public', table: 'customers', column: 'id', value: '1' },
+					{ schema: 'public', table: 'orders', column: 'id', value: '1' }
+				]
+			});
+			expect(await open()).toMatchObject({
+				type: 'palette',
+				outcomes: [
+					{ kind: 'denied' },
+					{ kind: 'rows', rows: [['1', '1', null, expect.any(String)]] }
+				]
+			});
+			connector.child.kill();
+			await exitCode(connector.child);
+		} finally {
+			await target.unsafe(`DROP OWNED BY ${role}`);
+			await target.unsafe(`DROP ROLE ${role}`);
+			await target.end();
+		}
 	});
 
 	it('reports database errors to the browser', async () => {

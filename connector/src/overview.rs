@@ -54,7 +54,7 @@ pub enum TableKind {
     ForeignTable,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Column {

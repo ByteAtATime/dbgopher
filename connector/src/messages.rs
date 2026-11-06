@@ -4,6 +4,7 @@ use ts_rs::TS;
 use crate::browse::{self, Filter, Rows, Sort};
 use crate::database::Database;
 use crate::overview::{self, Overview};
+use crate::palette::{self, Palette, Target};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
@@ -33,6 +34,9 @@ pub enum Request {
         #[ts(optional)]
         filter: Option<Vec<Filter>>,
     },
+    Palette {
+        targets: Vec<Target>,
+    },
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -51,6 +55,7 @@ pub enum Response {
     },
     Overview(Overview),
     Browse(Rows),
+    Palette(Palette),
     Error {
         message: String,
     },
@@ -62,6 +67,7 @@ pub enum Response {
 pub enum Capability {
     Overview,
     Browse,
+    Palette,
 }
 
 pub async fn handle(database: &Database, request: Request) -> Response {
@@ -69,7 +75,11 @@ pub async fn handle(database: &Database, request: Request) -> Response {
         Request::Hello => Response::Hello {
             protocol_version: PROTOCOL_VERSION,
             connector_version: env!("CARGO_PKG_VERSION").into(),
-            capabilities: vec![Capability::Overview, Capability::Browse],
+            capabilities: vec![
+                Capability::Overview,
+                Capability::Browse,
+                Capability::Palette,
+            ],
             read_only: true,
         },
         Request::Overview => match database.read(overview::load).await {
@@ -109,5 +119,11 @@ pub async fn handle(database: &Database, request: Request) -> Response {
                 },
             }
         }
+        Request::Palette { targets } => match palette::search(database, &targets).await {
+            Ok(palette) => Response::Palette(palette),
+            Err(error) => Response::Error {
+                message: error.describe(),
+            },
+        },
     }
 }

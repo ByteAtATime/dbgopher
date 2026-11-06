@@ -35,7 +35,19 @@ pub enum Direction {
 #[ts(export)]
 pub struct Filter {
     pub column: String,
+    #[serde(default)]
+    #[ts(as = "Option<Comparison>", optional)]
+    pub comparison: Comparison,
     pub value: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum Comparison {
+    #[default]
+    Equal,
+    LowerEqual,
 }
 
 pub const DEFAULT_LIMIT: u32 = 500;
@@ -51,6 +63,47 @@ const COLUMNS: &str = "
     WHERE n.nspname = $1 AND c.relname = $2 AND a.attnum > 0 AND NOT a.attisdropped
     ORDER BY a.attnum
 ";
+
+pub const VALUES: &str =
+    "array(SELECT value FROM json_each_text(row_to_json(t)) WITH ORDINALITY ORDER BY ordinality)";
+
+pub fn codecs(columns: &[Column]) -> Vec<Codec> {
+    columns
+        .iter()
+        .map(|column| Codec::for_type(column.type_oid))
+        .collect()
+}
+
+pub fn projection(columns: &[Column], codecs: &[Codec]) -> String {
+    columns
+        .iter()
+        .zip(codecs)
+        .map(|(column, codec)| codec.select(&column.name))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+pub fn condition(columns: &[Column], filter: &Filter, parameter: usize) -> String {
+    let column = quote_identifier(&filter.column);
+    match filter.comparison {
+        Comparison::Equal => {
+            let type_name = columns
+                .iter()
+                .find(|candidate| candidate.name == filter.column)
+                .map_or("text", |candidate| &candidate.type_name);
+            format!("source.{column} = ${parameter}::text::{type_name}")
+        }
+        Comparison::LowerEqual => format!("lower(source.{column}) = lower(${parameter}::text)"),
+    }
+}
+
+pub fn decode(values: Vec<Option<String>>, codecs: &[Codec]) -> Vec<Option<Cell>> {
+    values
+        .into_iter()
+        .zip(codecs)
+        .map(|(value, codec)| value.map(|value| codec.decode(value)))
+        .collect()
+}
 
 pub async fn load(
     transaction: &Transaction<'_>,
@@ -68,16 +121,8 @@ pub async fn load(
         .iter()
         .map(Column::from)
         .collect();
-    let codecs: Vec<Codec> = columns
-        .iter()
-        .map(|column| Codec::for_type(column.type_oid))
-        .collect();
-    let projection = columns
-        .iter()
-        .zip(&codecs)
-        .map(|(column, codec)| codec.select(&column.name))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let codecs = codecs(&columns);
+    let projection = projection(&columns, &codecs);
     let order = sort
         .map(|sort| {
             let direction = match sort.direction {
@@ -93,17 +138,7 @@ pub async fn load(
     let conditions = filters
         .iter()
         .enumerate()
-        .map(|(index, filter)| {
-            let type_name = columns
-                .iter()
-                .find(|column| column.name == filter.column)
-                .map_or("text", |column| &column.type_name);
-            format!(
-                "source.{} = ${}::text::{type_name}",
-                quote_identifier(&filter.column),
-                index + 3
-            )
-        })
+        .map(|(index, filter)| condition(&columns, filter, index + 3))
         .collect::<Vec<_>>();
     let filter = if conditions.is_empty() {
         String::new()
@@ -111,9 +146,7 @@ pub async fn load(
         format!("WHERE {}", conditions.join(" AND "))
     };
     let query = format!(
-        "SELECT array(
-            SELECT value FROM json_each_text(row_to_json(t)) WITH ORDINALITY ORDER BY ordinality
-        ) AS values
+        "SELECT {VALUES} AS values
         FROM (SELECT {projection} FROM {}.{} source {filter} {order} LIMIT $1 OFFSET $2) t",
         quote_identifier(schema),
         quote_identifier(table)
@@ -132,13 +165,7 @@ pub async fn load(
         columns,
         rows: rows
             .iter()
-            .map(|row| {
-                row.get::<_, Vec<Option<String>>>("values")
-                    .into_iter()
-                    .zip(&codecs)
-                    .map(|(value, codec)| value.map(|value| codec.decode(value)))
-                    .collect()
-            })
+            .map(|row| decode(row.get("values"), &codecs))
             .collect(),
     })
 }

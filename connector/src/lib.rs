@@ -6,6 +6,7 @@ pub mod database;
 pub mod envelope;
 pub mod messages;
 pub mod overview;
+pub mod palette;
 
 pub mod relay {
     include!(concat!(env!("OUT_DIR"), "/dbgopher.relay.rs"));

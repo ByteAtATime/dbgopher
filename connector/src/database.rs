@@ -1,7 +1,9 @@
+use std::ops::Deref;
 use std::time::Duration;
 
-use deadpool_postgres::{BuildError, Manager, ManagerConfig, Pool, PoolError, Runtime};
-use tokio_postgres::Transaction;
+use deadpool_postgres::{BuildError, Manager, ManagerConfig, Object, Pool, PoolError, Runtime};
+use futures_util::future::try_join;
+use tokio_postgres::{Client, Transaction};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 use crate::error_chain;
@@ -41,6 +43,8 @@ impl Database {
     const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
     const WAIT_TIMEOUT: Duration = Duration::from_secs(25);
     const SET_STATEMENT_TIMEOUT: &str = "SET LOCAL statement_timeout = '25s'";
+    const BEGIN_PIPELINED: &str =
+        "BEGIN READ ONLY; SET LOCAL idle_in_transaction_session_timeout = '5s';";
 
     pub fn new(mut config: tokio_postgres::Config) -> Result<Self, BuildError> {
         if config.get_connect_timeout().is_none() {
@@ -71,5 +75,47 @@ impl Database {
         let result = query(&transaction).await?;
         transaction.commit().await?;
         Ok(result)
+    }
+
+    pub async fn read_pipelined<T>(
+        &self,
+        settings: &str,
+        query: impl AsyncFnOnce(&Client) -> Result<T, tokio_postgres::Error>,
+    ) -> Result<T, Error> {
+        let client = Lease(Some(self.0.get().await?));
+        let begin = format!("{} {settings}", Self::BEGIN_PIPELINED);
+        let result = try_join(client.batch_execute(&begin), query(&client))
+            .await
+            .map(|((), value)| value);
+        if result.is_ok() || client.batch_execute("ROLLBACK").await.is_ok() {
+            client.release();
+        }
+        Ok(result?)
+    }
+}
+
+struct Lease(Option<Object>);
+
+impl Lease {
+    fn release(mut self) {
+        drop(self.0.take());
+    }
+}
+
+impl Deref for Lease {
+    type Target = Client;
+
+    fn deref(&self) -> &Client {
+        self.0
+            .as_ref()
+            .expect("a lease holds its client until released")
+    }
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        if let Some(object) = self.0.take() {
+            drop(Object::take(object));
+        }
     }
 }
