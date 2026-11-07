@@ -3,7 +3,7 @@
 	import { createConnection } from '#lib/connection.svelte.ts';
 	import type { Sort } from '#lib/protocol/bindings/Sort.ts';
 	import { RelayError } from '#lib/protocol/client.ts';
-	import { incomingReferences } from '#lib/references.ts';
+	import { incomingReferences, outgoingReferences } from '#lib/references.ts';
 	import { formatRoute, parseRoute } from '#lib/route.ts';
 	import XIcon from '@lucide/svelte/icons/x';
 	import CommandPalette from './CommandPalette.svelte';
@@ -52,6 +52,11 @@
 	const references = $derived(
 		overview.type === 'loaded' && target
 			? incomingReferences(overview.overview.tables, target.schema, target.table)
+			: []
+	);
+	const outgoing = $derived(
+		overview.type === 'loaded' && target
+			? outgoingReferences(overview.overview.tables, target.schema, target.table)
 			: []
 	);
 	const count = $derived(rows.type === 'loaded' ? rows.rows.rows.length : undefined);
@@ -158,6 +163,7 @@
 						loading={rows.type === 'loading'}
 						{sort}
 						{references}
+						{outgoing}
 						onsort={(next) => (sort = next)}
 						onprefetch={(reference, filter) =>
 							connection.prefetch({
@@ -165,6 +171,15 @@
 								table: reference.table,
 								filter,
 								limit: PAGE_SIZE,
+								offset: 0,
+								sort: undefined
+							})}
+						lookup={(reference, filter) =>
+							connection.lookup({
+								schema: reference.schema,
+								table: reference.table,
+								filter,
+								limit: 1,
 								offset: 0,
 								sort: undefined
 							})}

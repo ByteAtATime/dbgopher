@@ -11,6 +11,7 @@
 	import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
 	import { toast } from 'svelte-sonner';
 	import { selectedText, toHtml, toTsv } from '#lib/clipboard.ts';
+	import type { BrowseResult } from '#lib/browse-cache.ts';
 	import type { Column } from '#lib/protocol/bindings/Column.ts';
 	import type { Filter } from '#lib/protocol/bindings/Filter.ts';
 	import type { Sort } from '#lib/protocol/bindings/Sort.ts';
@@ -18,6 +19,7 @@
 	import type { Reference } from '#lib/references.ts';
 	import RowsTableCell, { setRows } from './RowsTableCell.svelte';
 	import RowsTableHeader, { setColumns, setSort } from './RowsTableHeader.svelte';
+	import { setOutgoingLinks } from './RowsTableOutgoing.svelte';
 	import RowsTableReference, { setReferenceLinks } from './RowsTableReference.svelte';
 	import RowsTableReferenceHeader from './RowsTableReferenceHeader.svelte';
 
@@ -27,8 +29,10 @@
 		sort?: Sort;
 		loading?: boolean;
 		references?: Reference[];
+		outgoing?: Reference[];
 		onsort: (sort: Sort | undefined) => void;
 		onprefetch: (reference: Reference, filter: Filter[]) => void;
+		lookup: (reference: Reference, filter: Filter[]) => Promise<BrowseResult>;
 	};
 
 	const COLUMN_WIDTH = 250;
@@ -43,8 +47,10 @@
 		sort,
 		loading = false,
 		references = [],
+		outgoing = [],
 		onsort,
-		onprefetch
+		onprefetch,
+		lookup
 	}: Props = $props();
 
 	setRows(() => rows);
@@ -56,6 +62,12 @@
 	setReferenceLinks({
 		references: () => references,
 		columns: () => headers.length,
+		onprefetch: (reference, filter) => onprefetch(reference, filter)
+	});
+
+	setOutgoingLinks({
+		references: () => outgoing,
+		lookup: (reference, filter) => lookup(reference, filter),
 		onprefetch: (reference, filter) => onprefetch(reference, filter)
 	});
 
@@ -125,7 +137,7 @@
 	};
 
 	const press = (event: MouseEvent) => {
-		if (followsLink(event)) return;
+		if (interactive(event)) return;
 		const cell = locate(event);
 		if (!cell) return;
 		dragging = true;
@@ -141,16 +153,16 @@
 		if (dragging && anchor) head = locate(event) ?? head;
 	};
 
-	const followsLink = (event: MouseEvent) =>
+	const interactive = (event: MouseEvent) =>
 		event.target instanceof Element &&
-		event.target.closest('a') !== null &&
+		event.target.closest('a, button') !== null &&
 		!(event.shiftKey && anchor);
 
 	const blockGridClick = (event: MouseEvent) => {
 		if (!(event.target instanceof Element) || !event.target.closest('.wx-body')) return;
-		if (followsLink(event)) return;
+		if (interactive(event)) return;
 		event.stopPropagation();
-		if (event.target.closest('a')) event.preventDefault();
+		if (event.target.closest('a, button')) event.preventDefault();
 	};
 
 	const bounds = $derived(

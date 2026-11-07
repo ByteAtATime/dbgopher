@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import type { ForeignKey } from './protocol/bindings/ForeignKey';
 import type { Table } from './protocol/bindings/Table';
 import type { Browse } from './protocol/client';
-import { incomingReferences, referenceFilter, type Reference } from './references';
+import {
+	incomingReferences,
+	outgoingReferences,
+	referenceFilter,
+	type Reference
+} from './references';
 
 const table = (schema: string, name: string, foreignKeys: Omit<ForeignKey, 'name'>[] = []) =>
 	({
@@ -79,6 +84,38 @@ describe('incomingReferences', () => {
 				referencedColumns: ['id']
 			}
 		]);
+	});
+});
+
+describe('outgoingReferences', () => {
+	it('points each foreign key at the referenced row, qualifying other schemas', () => {
+		const tables = [
+			table('public', 'customers'),
+			table('public', 'orders', [
+				to('customers', ['customer_id']),
+				{ ...to('regions', ['region_code'], ['code']), referencedSchema: 'geo' }
+			])
+		];
+		expect(outgoingReferences(tables, 'public', 'orders')).toEqual([
+			{
+				label: 'customers',
+				schema: 'public',
+				table: 'customers',
+				columns: ['id'],
+				referencedColumns: ['customer_id']
+			},
+			{
+				label: 'geo.regions',
+				schema: 'geo',
+				table: 'regions',
+				columns: ['code'],
+				referencedColumns: ['region_code']
+			}
+		]);
+	});
+
+	it('gives nothing for an unknown table', () => {
+		expect(outgoingReferences([], 'public', 'orders')).toEqual([]);
 	});
 });
 

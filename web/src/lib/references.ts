@@ -34,6 +34,20 @@ export const incomingReferences = (tables: Table[], schema: string, table: strin
 		.map(({ reference }) => reference);
 };
 
+export const outgoingReferences = (tables: Table[], schema: string, table: string) =>
+	(
+		tables.find((source) => source.schema === schema && source.name === table)?.foreignKeys ?? []
+	).map((key): Reference => ({
+		label:
+			key.referencedSchema === schema
+				? key.referencedTable
+				: `${key.referencedSchema}.${key.referencedTable}`,
+		schema: key.referencedSchema,
+		table: key.referencedTable,
+		columns: key.referencedColumns,
+		referencedColumns: key.columns
+	}));
+
 export const referenceFilter = (
 	reference: Reference,
 	rows: Browse,

@@ -123,6 +123,11 @@ export const createConnection = (
 		void cache.fetch(options);
 	};
 
+	const lookup = async (options: BrowseOptions): Promise<BrowseResult> => {
+		const hit = cache.get(options);
+		return hit ? { type: 'loaded', rows: hit.rows } : cache.fetch(options);
+	};
+
 	const start = () => {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -159,6 +164,7 @@ export const createConnection = (
 		},
 		select,
 		prefetch,
+		lookup,
 		search: (targets: PaletteTarget[]) => client.palette(targets),
 		start
 	};
