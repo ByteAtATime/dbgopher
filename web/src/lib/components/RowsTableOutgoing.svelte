@@ -38,47 +38,54 @@
 </script>
 
 {#key route}
-	<Popover.Root bind:open>
-		<Popover.Trigger>
-			{#snippet child({ props })}
+	<span
+		class="absolute inset-y-0 right-0 flex bg-[linear-gradient(to_right,transparent,var(--cell-background)_0.75rem)] pl-4 opacity-0 has-focus-visible:opacity-100 has-data-[state=open]:opacity-100 [.wx-cell:hover_&]:opacity-100"
+	>
+		<Popover.Root bind:open>
+			<Popover.Trigger>
+				{#snippet child({ props })}
+					<Button
+						{...props}
+						variant="ghost"
+						size="icon-xs"
+						class="h-full w-8 rounded-none text-muted-foreground"
+						onpointerenter={() => void links.lookup(reference, filter)}
+					>
+						<ArrowUpRightIcon />
+					</Button>
+				{/snippet}
+			</Popover.Trigger>
+			<Popover.Content align="start" class="w-96 gap-2 p-3 text-xs">
 				<Button
-					{...props}
-					variant="ghost"
-					size="icon-xs"
-					class="-my-0.5 size-5 shrink-0 text-muted-foreground"
-					onpointerenter={() => void links.lookup(reference, filter)}
+					variant="secondary"
+					class="h-7 w-full rounded-sm hover:bg-primary hover:text-primary-foreground"
+					href={`#${route}`}
+					onpointerenter={() => links.onprefetch(reference, filter)}
 				>
-					<ArrowUpRightIcon />
+					<ArrowRightIcon class="size-3.5" />
 				</Button>
-			{/snippet}
-		</Popover.Trigger>
-		<Popover.Content align="start" class="w-96 gap-2 p-3 text-xs">
-			<Button
-				variant="secondary"
-				class="h-7 w-full rounded-sm hover:bg-primary hover:text-primary-foreground"
-				href={`#${route}`}
-				onpointerenter={() => links.onprefetch(reference, filter)}
-			>
-				<ArrowRightIcon class="size-3.5" />
-			</Button>
-			<Popover.Title class="truncate text-sm">{reference.label}</Popover.Title>
-			{#await result}
-				<LoaderCircleIcon class="size-4 animate-spin text-muted-foreground" />
-			{:then outcome}
-				{#if outcome?.type === 'failed'}
-					<pre class="font-mono whitespace-pre-wrap text-destructive">{outcome.error.message}</pre>
-				{:else if outcome?.rows.rows[0]}
-					{@const row = outcome.rows.rows[0]}
-					<dl class="grid max-h-80 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 overflow-y-auto">
-						{#each outcome.rows.columns as column, index (column.name)}
-							<dt class="text-muted-foreground">{column.name}</dt>
-							<dd class="truncate font-mono"><CellValue value={row[index]} /></dd>
-						{/each}
-					</dl>
-				{:else if outcome}
-					<span class="text-muted-foreground">—</span>
-				{/if}
-			{/await}
-		</Popover.Content>
-	</Popover.Root>
+				<Popover.Title class="truncate text-sm">{reference.label}</Popover.Title>
+				{#await result}
+					<LoaderCircleIcon class="size-4 animate-spin text-muted-foreground" />
+				{:then outcome}
+					{#if outcome?.type === 'failed'}
+						<pre class="font-mono whitespace-pre-wrap text-destructive">{outcome.error
+								.message}</pre>
+					{:else if outcome?.rows.rows[0]}
+						{@const row = outcome.rows.rows[0]}
+						<dl
+							class="grid max-h-80 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 overflow-y-auto"
+						>
+							{#each outcome.rows.columns as column, index (column.name)}
+								<dt class="text-muted-foreground">{column.name}</dt>
+								<dd class="truncate font-mono"><CellValue value={row[index]} /></dd>
+							{/each}
+						</dl>
+					{:else if outcome}
+						<span class="text-muted-foreground">—</span>
+					{/if}
+				{/await}
+			</Popover.Content>
+		</Popover.Root>
+	</span>
 {/key}

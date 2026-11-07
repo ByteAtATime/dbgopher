@@ -29,11 +29,9 @@
 </script>
 
 {#if reference && filter}
-	<div>
-		<div class="flex items-center gap-1">
-			<span class="min-w-0 flex-1 truncate"><CellValue {value} /></span>
-			<RowsTableOutgoing {reference} {filter} />
-		</div>
+	<div class="relative -m-2 p-2">
+		<span class="block truncate"><CellValue {value} /></span>
+		<RowsTableOutgoing {reference} {filter} />
 	</div>
 {:else}
 	<CellValue {value} />

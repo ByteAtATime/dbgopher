@@ -332,14 +332,19 @@
 		--wx-table-cell-border: 1px solid var(--muted-foreground);
 
 		:global(.wx-cell) {
-			background: var(--muted);
+			--cell-background: var(--muted);
 		}
+	}
+
+	.rows-grid :global(.wx-body .wx-cell) {
+		--cell-background: var(--background);
+		background: var(--cell-background);
 	}
 
 	.rows-grid :global(.wx-body .wx-row .wx-cell.selected) {
 		position: relative;
 		/* TODO: probably a bad idea? */
-		background: color-mix(var(--primary-soft), var(--background) 50%);
+		--cell-background: color-mix(var(--primary-soft), var(--background) 50%);
 	}
 
 	.rows-grid :global(.wx-body .wx-cell.selected::after) {
