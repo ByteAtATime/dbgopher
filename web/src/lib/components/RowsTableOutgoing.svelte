@@ -78,7 +78,7 @@
 						>
 							{#each outcome.rows.columns as column, index (column.name)}
 								<dt class="text-muted-foreground">{column.name}</dt>
-								<dd class="truncate font-mono"><CellValue value={row[index]} /></dd>
+								<dd class="truncate font-mono"><CellValue value={row[index]} {column} /></dd>
 							{/each}
 						</dl>
 					{:else if outcome}

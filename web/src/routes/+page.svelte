@@ -2,6 +2,9 @@
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import Timestamp from '#lib/components/Timestamp.svelte';
+	import * as Tooltip from '#lib/components/ui/tooltip/index.ts';
+	import { instantOf } from '#lib/timestamp.ts';
 	import VaultGate from '#lib/components/VaultGate.svelte';
 	import { Button } from '#lib/components/ui/button/index.ts';
 	import { Input } from '#lib/components/ui/input/index.ts';
@@ -49,29 +52,33 @@
 		<section class="space-y-3">
 			<h2 class="font-semibold">Connectors</h2>
 			{#if data.connectors.length > 0}
-				<ul class="divide-y rounded-md border">
-					{#each data.connectors as connector (connector.id)}
-						<li>
-							<a
-								href={resolve('/c/[id]', { id: connector.id })}
-								class="flex justify-between gap-4 p-3 text-sm hover:bg-muted"
-							>
-								<span>
-									{connector.name}
+				<Tooltip.Provider>
+					<ul class="divide-y rounded-md border">
+						{#each data.connectors as connector (connector.id)}
+							<li>
+								<a
+									href={resolve('/c/[id]', { id: connector.id })}
+									class="flex justify-between gap-4 p-3 text-sm hover:bg-muted"
+								>
+									<span>
+										{connector.name}
 
-									({#if connector.online}
-										Online
-									{:else if connector.lastSeenAt}
-										Offline; last seen {connector.lastSeenAt.toLocaleString()}
-									{:else}
-										Offline
-									{/if})
-								</span>
-								<span class="text-muted-foreground">{connector.createdAt.toLocaleString()}</span>
-							</a>
-						</li>
-					{/each}
-				</ul>
+										({#if connector.online}
+											Online
+										{:else if connector.lastSeenAt}
+											Offline; last seen <Timestamp instant={instantOf(connector.lastSeenAt)} />
+										{:else}
+											Offline
+										{/if})
+									</span>
+									<span class="text-muted-foreground"
+										><Timestamp instant={instantOf(connector.createdAt)} /></span
+									>
+								</a>
+							</li>
+						{/each}
+					</ul>
+				</Tooltip.Provider>
 			{/if}
 			<VaultGate userId={data.user.id}>
 				{#snippet children(vault)}

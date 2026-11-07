@@ -18,7 +18,8 @@
 
 	const loaded = $derived(rows());
 	const index = $derived(Number(row.id) - 1);
-	const name = $derived(loaded?.columns[Number(column.id) - 1]?.name);
+	const definition = $derived(loaded?.columns[Number(column.id) - 1]);
+	const name = $derived(definition?.name);
 	const value = $derived(loaded?.rows[index]?.[Number(column.id) - 1]);
 	const reference = $derived(
 		outgoing.references().find(({ referencedColumns }) => referencedColumns[0] === name)
@@ -29,10 +30,10 @@
 </script>
 
 {#if reference && filter}
-	<div class="relative -m-2 p-2">
-		<span class="block truncate"><CellValue {value} /></span>
+	<div class="relative -m-2">
+		<CellValue {value} column={definition} class="block truncate p-2" />
 		<RowsTableOutgoing {reference} {filter} />
 	</div>
 {:else}
-	<CellValue {value} />
+	<CellValue {value} column={definition} class="-m-2 block truncate p-2" />
 {/if}
