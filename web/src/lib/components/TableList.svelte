@@ -17,9 +17,36 @@
 	const singleSchema = $derived(
 		tables && tables.length > 0 ? new Set(tables.map((t) => t.schema)).size === 1 : false
 	);
+
+	let list = $state<HTMLElement | null>(null);
+
+	$effect(() => {
+		void selected;
+		list?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest' });
+	});
+
+	const onkeydown = (event: KeyboardEvent) => {
+		if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+		const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+		if (step === 0 || !tables || tables.length === 0) return;
+		event.preventDefault();
+		const current = tables.findIndex(
+			(table) => table.schema === selected?.schema && table.name === selected.table
+		);
+		const next =
+			current === -1
+				? step === 1
+					? 0
+					: tables.length - 1
+				: (current + step + tables.length) % tables.length;
+		const { schema, name } = tables[next];
+		location.replace(`#${formatRoute({ type: 'browse', schema, table: name, filter: [] })}`);
+	};
 </script>
 
-<ul class="space-y-0.5">
+<svelte:window {onkeydown} />
+
+<ul class="space-y-0.5" bind:this={list}>
 	{#if tables}
 		{#each tables as table (`${table.schema}.${table.name}`)}
 			{@const active = selected?.schema === table.schema && selected.table === table.name}
