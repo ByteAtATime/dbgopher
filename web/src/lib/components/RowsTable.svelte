@@ -22,6 +22,7 @@
 	import { setOutgoingLinks } from './RowsTableOutgoing.svelte';
 	import RowsTableReference, { setReferenceLinks } from './RowsTableReference.svelte';
 	import RowsTableReferenceHeader from './RowsTableReferenceHeader.svelte';
+	import * as Tooltip from '#lib/components/ui/tooltip/index.ts';
 
 	type Props = {
 		columns: Column[];
@@ -229,23 +230,25 @@
 
 <div
 	class={[
-		'rows-grid relative h-full',
+		'rows-grid relative isolate h-full',
 		!rows && '[&_.wx-body]:animate-pulse [&_.wx-body]:mask-b-from-0%'
 	]}
 	onmousedown={press}
 	onpointerover={extend}
 	onclickcapture={blockGridClick}
 >
-	<Willow fonts={false}>
-		<Grid
-			{data}
-			columns={gridColumns}
-			select={false}
-			{cellStyle}
-			{init}
-			sizes={{ rowHeight: 33, headerHeight: 40, columnWidth: COLUMN_WIDTH }}
-		/>
-	</Willow>
+	<Tooltip.Provider>
+		<Willow fonts={false}>
+			<Grid
+				{data}
+				columns={gridColumns}
+				select={false}
+				{cellStyle}
+				{init}
+				sizes={{ rowHeight: 33, headerHeight: 40, columnWidth: COLUMN_WIDTH }}
+			/>
+		</Willow>
+	</Tooltip.Provider>
 	{#if rows && loading}
 		<div
 			class="absolute inset-x-0 top-10 bottom-0 z-10 flex items-center justify-center bg-background/60"

@@ -12,13 +12,21 @@
 	import ChevronUp from '@lucide/svelte/icons/chevron-up';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ChevronsUpDown from '@lucide/svelte/icons/chevrons-up-down';
+	import ArrowUpRightIcon from '@lucide/svelte/icons/arrow-up-right';
+	import * as Tooltip from '#lib/components/ui/tooltip/index.ts';
+	import { getOutgoingLinks } from './RowsTableOutgoing.svelte';
 
 	let { cell, column }: IHeaderCellProps = $props();
 
 	const sort = getSort();
 	const columns = getColumns();
+	const outgoing = getOutgoingLinks();
 
 	const type = $derived(columns()[Number(column.id) - 1]?.typeName);
+
+	const reference = $derived(
+		outgoing.references().find(({ referencedColumns }) => referencedColumns[0] === cell.text)
+	);
 
 	const direction = $derived(sort()?.column === cell.text ? sort()?.direction : undefined);
 </script>
@@ -28,6 +36,20 @@
 		{cell.text}
 		{#if type}
 			<span class="font-mono text-xs text-muted-foreground/70">{type}</span>
+		{/if}
+		{#if reference}
+			<Tooltip.Root>
+				<Tooltip.Trigger>
+					{#snippet child({ props })}
+						<span {...props} class="inline-flex align-middle text-muted-foreground/70">
+							<ArrowUpRightIcon class="size-3.5" />
+						</span>
+					{/snippet}
+				</Tooltip.Trigger>
+				<Tooltip.Content class="font-mono">
+					{reference.label}.{reference.columns.join(', ')}
+				</Tooltip.Content>
+			</Tooltip.Root>
 		{/if}
 	</span>
 	{#if direction === 'asc'}
