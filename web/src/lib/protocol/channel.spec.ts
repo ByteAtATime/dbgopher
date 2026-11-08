@@ -2,117 +2,143 @@ import sodium from 'libsodium-wrappers';
 import { beforeAll, describe, expect, it } from 'vitest';
 import vectors from '../../../../protocol/vectors.json';
 import {
-	createChannel,
+	concat,
 	decode,
-	deriveKey,
-	deriveSessionKey,
 	encode,
-	open,
 	requestHeader,
-	seal
+	sealRequest,
+	suite,
+	SUITE,
+	userKeyFromSeed,
+	verifyKeyConfig,
+	verifyPairingProof
 } from './channel';
 
-const { prekey } = vectors;
-const HEADER_LENGTH = 65;
-const connectorKey = () => sodium.from_hex(vectors.connectorKey);
-const prekeyPublic = () => sodium.from_hex(prekey.prekeyPublic);
-const aad = () => new TextEncoder().encode(vectors.connectorId);
+const hex = (text: string) => sodium.from_hex(text);
+const signedConfig = () => concat(hex(vectors.keyConfig.config), hex(vectors.keyConfig.signature));
+const verify = (signed = signedConfig(), overrides = {}) =>
+	verifyKeyConfig(signed, {
+		identityKey: hex(vectors.identity.public),
+		connectorId: vectors.connectorId,
+		now: vectors.keyConfig.expiresAt - 1,
+		...overrides
+	});
 
 beforeAll(() => sodium.ready);
 
-const connect = (connectorId = vectors.connectorId) =>
-	createChannel(connectorKey(), connectorId, prekeyPublic());
-
-const connectorKeys = (sealed: Uint8Array) => {
-	const browserPublic = sealed.subarray(33, HEADER_LENGTH);
-	const sessionKey = deriveSessionKey(
-		connectorKey(),
-		browserPublic,
-		prekeyPublic(),
-		sodium.crypto_scalarmult(sodium.from_hex(prekey.prekeySecret), browserPublic)
-	);
-	return {
-		request: deriveKey(sessionKey, 'dbgopher/request'),
-		response: deriveKey(sessionKey, 'dbgopher/response')
-	};
-};
-
 describe('vectors', () => {
-	it('derives the session key from the prekey', () => {
-		const browserSecret = sodium.from_hex(prekey.browserSecret);
-		expect(sodium.to_hex(sodium.crypto_scalarmult_base(browserSecret))).toBe(prekey.browserPublic);
-		const shared = sodium.crypto_scalarmult(browserSecret, prekeyPublic());
-		expect(sodium.to_hex(shared)).toBe(prekey.shared);
-		const sessionKey = deriveSessionKey(
-			connectorKey(),
-			sodium.from_hex(prekey.browserPublic),
-			prekeyPublic(),
-			shared
+	it('uses the vector suite', () => {
+		expect(sodium.to_hex(SUITE)).toBe(vectors.suite);
+	});
+
+	it('matches the RFC 9180 base mode vectors', async () => {
+		const { rfc9180: rfc } = vectors;
+		const sender = await suite.createSenderContext({
+			recipientPublicKey: await suite.kem.deserializePublicKey(hex(rfc.pkRm)),
+			info: hex(rfc.info),
+			ekm: hex(rfc.ikmE)
+		});
+		expect(sodium.to_hex(new Uint8Array(sender.enc))).toBe(rfc.enc);
+		expect(sodium.to_hex(new Uint8Array(await sender.seal(hex(rfc.pt), hex(rfc.aad))))).toBe(
+			rfc.ct
 		);
-		expect(sodium.to_hex(sessionKey)).toBe(prekey.sessionKey);
+		for (const { context, length, value } of rfc.exports) {
+			expect(sodium.to_hex(new Uint8Array(await sender.export(hex(context), length)))).toBe(value);
+		}
 	});
 
-	it('encodes the request header', () => {
-		expect(
-			sodium.to_hex(requestHeader(prekeyPublic(), sodium.from_hex(prekey.browserPublic)))
-		).toBe(prekey.header);
-	});
-
-	it('derives the per-direction keys', () => {
-		const sessionKey = sodium.from_hex(prekey.sessionKey);
-		expect(sodium.to_hex(deriveKey(sessionKey, 'dbgopher/request'))).toBe(vectors.requestKey);
-		expect(sodium.to_hex(deriveKey(sessionKey, 'dbgopher/response'))).toBe(vectors.responseKey);
-	});
-
-	it.each(vectors.messages)('matches the $direction vector', (message) => {
-		const key = sodium.from_hex(
-			message.direction === 'request' ? vectors.requestKey : vectors.responseKey
+	it('verifies the vector key config', async () => {
+		const keyConfig = await verify();
+		expect(keyConfig).toBeDefined();
+		expect(sodium.to_hex(keyConfig?.prekey ?? new Uint8Array())).toBe(
+			vectors.keyConfig.prekeyPublic
 		);
-		const plaintext = sodium.from_hex(message.plaintext);
-		const sealed = seal(key, aad(), plaintext, sodium.from_hex(message.nonce));
-		expect(sodium.to_hex(sealed)).toBe(message.sealed);
-		expect(sodium.to_hex(open(key, aad(), sealed))).toBe(message.plaintext);
-		expect(decode(plaintext)).toEqual(message.envelope);
+		expect(keyConfig?.expiresAt).toBe(vectors.keyConfig.expiresAt);
+		expect(sodium.to_hex(keyConfig?.hash ?? new Uint8Array())).toBe(vectors.keyConfig.hash);
+	});
+
+	it('derives the vector user key', async () => {
+		const userKey = await userKeyFromSeed(hex(vectors.user.seed));
+		expect(sodium.to_hex(userKey.publicKey)).toBe(vectors.user.public);
+	});
+
+	it('seals the vector request frame and opens the vector response', async () => {
+		const keyConfig = await verify();
+		if (!keyConfig) throw new Error('The vector key config does not verify');
+		const userKey = await userKeyFromSeed(hex(vectors.user.seed));
+		expect(sodium.to_hex(requestHeader(keyConfig, userKey))).toBe(vectors.request.header);
+		const { frame, open } = await sealRequest(
+			keyConfig,
+			userKey,
+			hex(vectors.request.plaintext),
+			hex(vectors.request.ikmE)
+		);
+		expect(sodium.to_hex(frame)).toBe(vectors.request.frame);
+		expect(sodium.to_hex(await open(hex(vectors.response.frame)))).toBe(vectors.response.plaintext);
+	});
+
+	it('verifies the vector pairing proof', async () => {
+		const verifyProof = (proof: Uint8Array) =>
+			verifyPairingProof(
+				hex(vectors.pairing.secret),
+				vectors.connectorId,
+				hex(vectors.identity.public),
+				proof
+			);
+		const proof = hex(vectors.pairing.proof);
+		expect(await verifyProof(proof)).toBe(true);
+		proof[0] ^= 1;
+		expect(await verifyProof(proof)).toBe(false);
+	});
+
+	it.each(vectors.envelopes)('decodes the envelope $envelope.id', ({ envelope, plaintext }) => {
+		expect(decode(hex(plaintext))).toEqual(envelope);
 	});
 });
 
-describe('createChannel', () => {
-	it('seals requests the connector can open under a fresh ephemeral key', async () => {
-		const first = (await connect()).sealRequest({ message: 'hello' });
-		const second = (await connect()).sealRequest({ message: 'hello' });
-		const header = first.sealed.subarray(0, HEADER_LENGTH);
-		expect(sodium.to_hex(header)).toBe(
-			sodium.to_hex(requestHeader(prekeyPublic(), header.subarray(33)))
+describe('verifyKeyConfig', () => {
+	it.each([
+		[
+			'signed by another identity',
+			() => verify(signedConfig(), { identityKey: new Uint8Array(32) })
+		],
+		['for another connector', () => verify(signedConfig(), { connectorId: crypto.randomUUID() })],
+		['expired', () => verify(signedConfig(), { now: vectors.keyConfig.expiresAt })],
+		['truncated', () => verify(signedConfig().subarray(1))],
+		[
+			'tampered',
+			() => {
+				const signed = signedConfig();
+				signed[30] ^= 1;
+				return verify(signed);
+			}
+		]
+	])('rejects key configs %s', async (_, verifyConfig) => {
+		expect(await verifyConfig()).toBeUndefined();
+	});
+});
+
+describe('sealRequest', () => {
+	it('seals each request under a fresh ephemeral key', async () => {
+		const keyConfig = await verify();
+		if (!keyConfig) throw new Error('The vector key config does not verify');
+		const userKey = await userKeyFromSeed(hex(vectors.user.seed));
+		const plaintext = encode({ id: crypto.randomUUID(), sentAt: 0, body: null });
+		const first = await sealRequest(keyConfig, userKey, plaintext);
+		const second = await sealRequest(keyConfig, userKey, plaintext);
+		const headerLength = requestHeader(keyConfig, userKey).length;
+		expect(first.frame.subarray(0, headerLength)).toEqual(second.frame.subarray(0, headerLength));
+		expect(first.frame.subarray(headerLength, headerLength + 32)).not.toEqual(
+			second.frame.subarray(headerLength, headerLength + 32)
 		);
-		expect(second.sealed.subarray(0, HEADER_LENGTH)).not.toEqual(header);
-		const request = connectorKeys(first.sealed).request;
-		expect(decode(open(request, aad(), first.sealed.subarray(HEADER_LENGTH)))).toMatchObject({
-			id: first.id,
-			body: { message: 'hello' }
-		});
 	});
 
-	it('opens responses only for the request they answer', async () => {
-		const channel = await connect();
-		const { sealed } = channel.sealRequest({ message: 'hello' });
-		const envelope = { id: crypto.randomUUID(), sentAt: Date.now(), body: 'pong' };
-		const response = seal(connectorKeys(sealed).response, aad(), encode(envelope));
-		expect(channel.openResponse(envelope.id, response)).toBe('pong');
-		expect(() => channel.openResponse(crypto.randomUUID(), response)).toThrow();
-	});
-
-	it('rejects responses sealed for another connector', async () => {
-		const channel = await connect('another-connector');
-		const { sealed } = channel.sealRequest({ message: 'hello' });
-		const envelope = { id: crypto.randomUUID(), sentAt: Date.now(), body: 'pong' };
-		const response = seal(connectorKeys(sealed).response, aad(), encode(envelope));
-		expect(() => channel.openResponse(envelope.id, response)).toThrow();
-	});
-
-	it('rejects low-order prekeys', async () => {
-		await expect(
-			createChannel(connectorKey(), vectors.connectorId, new Uint8Array(32))
-		).rejects.toThrow();
+	it('rejects responses it cannot open', async () => {
+		const keyConfig = await verify();
+		if (!keyConfig) throw new Error('The vector key config does not verify');
+		const userKey = await userKeyFromSeed(hex(vectors.user.seed));
+		const { open } = await sealRequest(keyConfig, userKey, hex(vectors.request.plaintext));
+		await expect(open(hex(vectors.response.frame))).rejects.toThrow();
 	});
 
 	it('round-trips through encode and decode', () => {

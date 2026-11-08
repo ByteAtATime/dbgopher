@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file relay.proto.
  */
 export const file_relay: GenFile = /*@__PURE__*/
-  fileDesc("CgtyZWxheS5wcm90bxIOZGJnb3BoZXIucmVsYXkinQEKEENvbm5lY3Rvck1lc3NhZ2USJgoFaGVsbG8YASABKAsyFS5kYmdvcGhlci5yZWxheS5IZWxsb0gAEiwKCHJlc3BvbnNlGAIgASgLMhguZGJnb3BoZXIucmVsYXkuUmVzcG9uc2VIABIoCgZwcmVrZXkYAyABKAsyFi5kYmdvcGhlci5yZWxheS5QcmVrZXlIAEIJCgdtZXNzYWdlIpkBCgxSZWxheU1lc3NhZ2USKgoHd2VsY29tZRgBIAEoCzIXLmRiZ29waGVyLnJlbGF5LldlbGNvbWVIABImCgVjbG9zZRgCIAEoCzIVLmRiZ29waGVyLnJlbGF5LkNsb3NlSAASKgoHcmVxdWVzdBgDIAEoCzIXLmRiZ29waGVyLnJlbGF5LlJlcXVlc3RIAEIJCgdtZXNzYWdlImEKBUhlbGxvEhgKEHByb3RvY29sX3ZlcnNpb24YASABKA0SGQoRY29ubmVjdG9yX3ZlcnNpb24YAiABKAkSFAoMY29ubmVjdG9yX2lkGAMgASgJEg0KBXRva2VuGAQgASgJIgkKB1dlbGNvbWUiHAoGUHJla2V5EhIKCnB1YmxpY19rZXkYASABKAwisQEKBUNsb3NlEiwKBnJlYXNvbhgBIAEoDjIcLmRiZ29waGVyLnJlbGF5LkNsb3NlLlJlYXNvbhIOCgZkZXRhaWwYAiABKAkiagoGUmVhc29uEhYKElJFQVNPTl9VTlNQRUNJRklFRBAAEhoKFlJFQVNPTl9VUERBVEVfUkVRVUlSRUQQARIXChNSRUFTT05fVU5BVVRIT1JJWkVEEAISEwoPUkVBU09OX1JFUExBQ0VEEAMiNwoHUmVxdWVzdBIKCgJpZBgBIAEoBBIOCgZzZWFsZWQYAyABKAxKBAgCEANSCnNlc3Npb25faWQiagoIUmVzcG9uc2USEgoKcmVxdWVzdF9pZBgBIAEoBBIQCgZzZWFsZWQYAiABKAxIABIuCglyZWplY3Rpb24YAyABKAsyGS5kYmdvcGhlci5yZWxheS5SZWplY3Rpb25IAEIICgZyZXN1bHQi7QEKCVJlamVjdGlvbhIwCgZyZWFzb24YASABKA4yIC5kYmdvcGhlci5yZWxheS5SZWplY3Rpb24uUmVhc29uIq0BCgZSZWFzb24SFgoSUkVBU09OX1VOU1BFQ0lGSUVEEAASGAoUUkVBU09OX1VOREVDUllQVEFCTEUQARISCg5SRUFTT05fRVhQSVJFRBACEhMKD1JFQVNPTl9SRVBMQVlFRBADEhQKEFJFQVNPTl9NQUxGT1JNRUQQBBIUChBSRUFTT05fU1RBTEVfS0VZEAYiBAgFEAUqFlJFQVNPTl9VTktOT1dOX1NFU1NJT05iBnByb3RvMw");
+  fileDesc("CgtyZWxheS5wcm90bxIOZGJnb3BoZXIucmVsYXki3AEKEENvbm5lY3Rvck1lc3NhZ2USJgoFaGVsbG8YASABKAsyFS5kYmdvcGhlci5yZWxheS5IZWxsb0gAEiwKCHJlc3BvbnNlGAIgASgLMhguZGJnb3BoZXIucmVsYXkuUmVzcG9uc2VIABIvCgprZXlfY29uZmlnGAQgASgLMhkuZGJnb3BoZXIucmVsYXkuS2V5Q29uZmlnSAASKAoGZW5yb2xsGAUgASgLMhYuZGJnb3BoZXIucmVsYXkuRW5yb2xsSABCCQoHbWVzc2FnZUoECAMQBFIGcHJla2V5IscBCgxSZWxheU1lc3NhZ2USKgoHd2VsY29tZRgBIAEoCzIXLmRiZ29waGVyLnJlbGF5LldlbGNvbWVIABImCgVjbG9zZRgCIAEoCzIVLmRiZ29waGVyLnJlbGF5LkNsb3NlSAASKgoHcmVxdWVzdBgDIAEoCzIXLmRiZ29waGVyLnJlbGF5LlJlcXVlc3RIABIsCghlbnJvbGxlZBgEIAEoCzIYLmRiZ29waGVyLnJlbGF5LkVucm9sbGVkSABCCQoHbWVzc2FnZSJhCgVIZWxsbxIYChBwcm90b2NvbF92ZXJzaW9uGAEgASgNEhkKEWNvbm5lY3Rvcl92ZXJzaW9uGAIgASgJEhQKDGNvbm5lY3Rvcl9pZBgDIAEoCRINCgV0b2tlbhgEIAEoCSIJCgdXZWxjb21lIncKBkVucm9sbBIYChBwcm90b2NvbF92ZXJzaW9uGAEgASgNEhQKDGNvbm5lY3Rvcl9pZBgCIAEoCRIYChBlbnJvbGxtZW50X3Rva2VuGAMgASgJEhQKDGlkZW50aXR5X2tleRgEIAEoDBINCgVwcm9vZhgFIAEoDCIZCghFbnJvbGxlZBINCgV0b2tlbhgBIAEoCSIuCglLZXlDb25maWcSDgoGY29uZmlnGAEgASgMEhEKCXNpZ25hdHVyZRgCIAEoDCKxAQoFQ2xvc2USLAoGcmVhc29uGAEgASgOMhwuZGJnb3BoZXIucmVsYXkuQ2xvc2UuUmVhc29uEg4KBmRldGFpbBgCIAEoCSJqCgZSZWFzb24SFgoSUkVBU09OX1VOU1BFQ0lGSUVEEAASGgoWUkVBU09OX1VQREFURV9SRVFVSVJFRBABEhcKE1JFQVNPTl9VTkFVVEhPUklaRUQQAhITCg9SRUFTT05fUkVQTEFDRUQQAyI3CgdSZXF1ZXN0EgoKAmlkGAEgASgEEg4KBnNlYWxlZBgDIAEoDEoECAIQA1IKc2Vzc2lvbl9pZCJqCghSZXNwb25zZRISCgpyZXF1ZXN0X2lkGAEgASgEEhAKBnNlYWxlZBgCIAEoDEgAEi4KCXJlamVjdGlvbhgDIAEoCzIZLmRiZ29waGVyLnJlbGF5LlJlamVjdGlvbkgAQggKBnJlc3VsdCKKAgoJUmVqZWN0aW9uEjAKBnJlYXNvbhgBIAEoDjIgLmRiZ29waGVyLnJlbGF5LlJlamVjdGlvbi5SZWFzb24iygEKBlJlYXNvbhIWChJSRUFTT05fVU5TUEVDSUZJRUQQABIYChRSRUFTT05fVU5ERUNSWVBUQUJMRRABEhQKEFJFQVNPTl9NQUxGT1JNRUQQBBIUChBSRUFTT05fU1RBTEVfS0VZEAYSFwoTUkVBU09OX1VOQVVUSE9SSVpFRBAHIgQIAhACIgQIAxADIgQIBRAFKg5SRUFTT05fRVhQSVJFRCoPUkVBU09OX1JFUExBWUVEKhZSRUFTT05fVU5LTk9XTl9TRVNTSU9OYgZwcm90bzM");
 
 /**
  * @generated from message dbgopher.relay.ConnectorMessage
@@ -33,10 +33,16 @@ export type ConnectorMessage = Message<"dbgopher.relay.ConnectorMessage"> & {
     case: "response";
   } | {
     /**
-     * @generated from field: dbgopher.relay.Prekey prekey = 3;
+     * @generated from field: dbgopher.relay.KeyConfig key_config = 4;
      */
-    value: Prekey;
-    case: "prekey";
+    value: KeyConfig;
+    case: "keyConfig";
+  } | {
+    /**
+     * @generated from field: dbgopher.relay.Enroll enroll = 5;
+     */
+    value: Enroll;
+    case: "enroll";
   } | { case: undefined; value?: undefined };
 };
 
@@ -72,6 +78,12 @@ export type RelayMessage = Message<"dbgopher.relay.RelayMessage"> & {
      */
     value: Request;
     case: "request";
+  } | {
+    /**
+     * @generated from field: dbgopher.relay.Enrolled enrolled = 4;
+     */
+    value: Enrolled;
+    case: "enrolled";
   } | { case: undefined; value?: undefined };
 };
 
@@ -128,21 +140,80 @@ export const WelcomeSchema: GenMessage<Welcome> = /*@__PURE__*/
   messageDesc(file_relay, 3);
 
 /**
- * @generated from message dbgopher.relay.Prekey
+ * @generated from message dbgopher.relay.Enroll
  */
-export type Prekey = Message<"dbgopher.relay.Prekey"> & {
+export type Enroll = Message<"dbgopher.relay.Enroll"> & {
   /**
-   * @generated from field: bytes public_key = 1;
+   * @generated from field: uint32 protocol_version = 1;
    */
-  publicKey: Uint8Array;
+  protocolVersion: number;
+
+  /**
+   * @generated from field: string connector_id = 2;
+   */
+  connectorId: string;
+
+  /**
+   * @generated from field: string enrollment_token = 3;
+   */
+  enrollmentToken: string;
+
+  /**
+   * @generated from field: bytes identity_key = 4;
+   */
+  identityKey: Uint8Array;
+
+  /**
+   * @generated from field: bytes proof = 5;
+   */
+  proof: Uint8Array;
 };
 
 /**
- * Describes the message dbgopher.relay.Prekey.
- * Use `create(PrekeySchema)` to create a new message.
+ * Describes the message dbgopher.relay.Enroll.
+ * Use `create(EnrollSchema)` to create a new message.
  */
-export const PrekeySchema: GenMessage<Prekey> = /*@__PURE__*/
+export const EnrollSchema: GenMessage<Enroll> = /*@__PURE__*/
   messageDesc(file_relay, 4);
+
+/**
+ * @generated from message dbgopher.relay.Enrolled
+ */
+export type Enrolled = Message<"dbgopher.relay.Enrolled"> & {
+  /**
+   * @generated from field: string token = 1;
+   */
+  token: string;
+};
+
+/**
+ * Describes the message dbgopher.relay.Enrolled.
+ * Use `create(EnrolledSchema)` to create a new message.
+ */
+export const EnrolledSchema: GenMessage<Enrolled> = /*@__PURE__*/
+  messageDesc(file_relay, 5);
+
+/**
+ * @generated from message dbgopher.relay.KeyConfig
+ */
+export type KeyConfig = Message<"dbgopher.relay.KeyConfig"> & {
+  /**
+   * @generated from field: bytes config = 1;
+   */
+  config: Uint8Array;
+
+  /**
+   * @generated from field: bytes signature = 2;
+   */
+  signature: Uint8Array;
+};
+
+/**
+ * Describes the message dbgopher.relay.KeyConfig.
+ * Use `create(KeyConfigSchema)` to create a new message.
+ */
+export const KeyConfigSchema: GenMessage<KeyConfig> = /*@__PURE__*/
+  messageDesc(file_relay, 6);
 
 /**
  * @generated from message dbgopher.relay.Close
@@ -164,7 +235,7 @@ export type Close = Message<"dbgopher.relay.Close"> & {
  * Use `create(CloseSchema)` to create a new message.
  */
 export const CloseSchema: GenMessage<Close> = /*@__PURE__*/
-  messageDesc(file_relay, 5);
+  messageDesc(file_relay, 7);
 
 /**
  * @generated from enum dbgopher.relay.Close.Reason
@@ -195,7 +266,7 @@ export enum Close_Reason {
  * Describes the enum dbgopher.relay.Close.Reason.
  */
 export const Close_ReasonSchema: GenEnum<Close_Reason> = /*@__PURE__*/
-  enumDesc(file_relay, 5, 0);
+  enumDesc(file_relay, 7, 0);
 
 /**
  * @generated from message dbgopher.relay.Request
@@ -217,7 +288,7 @@ export type Request = Message<"dbgopher.relay.Request"> & {
  * Use `create(RequestSchema)` to create a new message.
  */
 export const RequestSchema: GenMessage<Request> = /*@__PURE__*/
-  messageDesc(file_relay, 6);
+  messageDesc(file_relay, 8);
 
 /**
  * @generated from message dbgopher.relay.Response
@@ -251,7 +322,7 @@ export type Response = Message<"dbgopher.relay.Response"> & {
  * Use `create(ResponseSchema)` to create a new message.
  */
 export const ResponseSchema: GenMessage<Response> = /*@__PURE__*/
-  messageDesc(file_relay, 7);
+  messageDesc(file_relay, 9);
 
 /**
  * @generated from message dbgopher.relay.Rejection
@@ -268,7 +339,7 @@ export type Rejection = Message<"dbgopher.relay.Rejection"> & {
  * Use `create(RejectionSchema)` to create a new message.
  */
 export const RejectionSchema: GenMessage<Rejection> = /*@__PURE__*/
-  messageDesc(file_relay, 8);
+  messageDesc(file_relay, 10);
 
 /**
  * @generated from enum dbgopher.relay.Rejection.Reason
@@ -285,16 +356,6 @@ export enum Rejection_Reason {
   UNDECRYPTABLE = 1,
 
   /**
-   * @generated from enum value: REASON_EXPIRED = 2;
-   */
-  EXPIRED = 2,
-
-  /**
-   * @generated from enum value: REASON_REPLAYED = 3;
-   */
-  REPLAYED = 3,
-
-  /**
    * @generated from enum value: REASON_MALFORMED = 4;
    */
   MALFORMED = 4,
@@ -303,11 +364,16 @@ export enum Rejection_Reason {
    * @generated from enum value: REASON_STALE_KEY = 6;
    */
   STALE_KEY = 6,
+
+  /**
+   * @generated from enum value: REASON_UNAUTHORIZED = 7;
+   */
+  UNAUTHORIZED = 7,
 }
 
 /**
  * Describes the enum dbgopher.relay.Rejection.Reason.
  */
 export const Rejection_ReasonSchema: GenEnum<Rejection_Reason> = /*@__PURE__*/
-  enumDesc(file_relay, 8, 0);
+  enumDesc(file_relay, 10, 0);
 

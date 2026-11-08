@@ -2,21 +2,23 @@ import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
-import { markConnectorSeen, verifyConnector } from '../connectors';
+import { enrollConnector, markConnectorSeen, verifyConnector } from '../connectors';
 import {
 	Close_Reason,
 	CloseSchema,
 	ConnectorMessageSchema,
+	EnrolledSchema,
 	Rejection_Reason,
 	RelayMessageSchema,
 	RequestSchema,
 	WelcomeSchema,
+	type Enroll,
 	type RelayMessage,
 	type Response
 } from './relay_pb';
 
 const CONNECTOR_PATH = '/connector';
-const SUPPORTED_PROTOCOL_VERSIONS = new Set([1]);
+const SUPPORTED_PROTOCOL_VERSIONS = new Set([2]);
 const HELLO_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const PING_INTERVAL_MS = 25_000;
@@ -33,7 +35,7 @@ export type RpcResult =
 type Connection = {
 	socket: WebSocket;
 	pending: Map<bigint, (result: RpcResult) => void>;
-	prekey?: Uint8Array;
+	keyConfig?: Uint8Array;
 };
 
 const decode = (data: RawData) => {
@@ -93,8 +95,11 @@ const createRelay = () => {
 				case 'response':
 					connection.pending.get(message.value.requestId)?.(toRpcResult(message.value.result));
 					break;
-				case 'prekey':
-					connection.prekey = message.value.publicKey.slice();
+				case 'keyConfig':
+					connection.keyConfig = new Uint8Array([
+						...message.value.config,
+						...message.value.signature
+					]);
 					break;
 			}
 		});
@@ -108,13 +113,28 @@ const createRelay = () => {
 		});
 	};
 
+	const enroll = async (
+		socket: WebSocket,
+		{ connectorId, enrollmentToken, identityKey, proof }: Enroll
+	) => {
+		const token = await enrollConnector(connectorId, enrollmentToken, identityKey, proof).catch(
+			() => null
+		);
+		if (token === null) return socket.terminate();
+		if (!token) {
+			return close(socket, Close_Reason.UNAUTHORIZED, 'Unknown connector ID or pairing code.');
+		}
+		send(socket, { case: 'enrolled', value: create(EnrolledSchema, { token }) });
+		socket.close();
+	};
+
 	const accept = (socket: WebSocket) => {
 		const timer = setTimeout(() => socket.terminate(), HELLO_TIMEOUT_MS);
 		socket.once('message', async (data) => {
 			clearTimeout(timer);
 			const message = decode(data);
-			if (message?.case !== 'hello') return socket.terminate();
-			const { protocolVersion, connectorVersion, connectorId, token } = message.value;
+			if (message?.case !== 'hello' && message?.case !== 'enroll') return socket.terminate();
+			const { protocolVersion } = message.value;
 			if (!SUPPORTED_PROTOCOL_VERSIONS.has(protocolVersion)) {
 				return close(
 					socket,
@@ -122,6 +142,8 @@ const createRelay = () => {
 					`Relay protocol version ${protocolVersion} is no longer supported. Update the connector.`
 				);
 			}
+			if (message.case === 'enroll') return enroll(socket, message.value);
+			const { connectorVersion, connectorId, token } = message.value;
 			const verified = await verifyConnector(connectorId, token).catch(() => undefined);
 			if (verified === undefined) return socket.terminate();
 			if (!verified)
@@ -156,9 +178,9 @@ const createRelay = () => {
 
 	const isOnline = (connectorId: string) => connections.has(connectorId);
 
-	const prekey = (connectorId: string) => connections.get(connectorId)?.prekey;
+	const keyConfig = (connectorId: string) => connections.get(connectorId)?.keyConfig;
 
-	return { handleUpgrade, rpc, isOnline, prekey };
+	return { handleUpgrade, rpc, isOnline, keyConfig };
 };
 
 export type Relay = ReturnType<typeof createRelay>;

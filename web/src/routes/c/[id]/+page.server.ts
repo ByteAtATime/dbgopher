@@ -8,5 +8,5 @@ export const load = async ({ params, locals, url }) => {
 		redirect(303, `${resolve('/sign-in')}?${new URLSearchParams({ redirectTo: url.pathname })}`);
 	}
 	if (!(await ownsConnector(locals.user.id, params.id))) error(404, 'Connector not found');
-	return { prekey: relay.prekey(params.id) };
+	return { keyConfig: relay.keyConfig(params.id) };
 };

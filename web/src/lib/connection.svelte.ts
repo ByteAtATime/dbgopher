@@ -5,6 +5,7 @@ import {
 	type Browse,
 	type BrowseOptions,
 	type Client,
+	type ClientOptions,
 	type Hello,
 	type Overview
 } from './protocol/client.ts';
@@ -51,18 +52,14 @@ const browse = async (client: Client, options: BrowseOptions): Promise<BrowseRes
 	}
 };
 
-export const createConnection = (
-	connectorId: string,
-	connectorKey: Uint8Array,
-	prekey?: Uint8Array
-) => {
+export const createConnection = (options: ClientOptions) => {
 	let status = $state<Status>({ type: 'connecting' });
 	let overview = $state<OverviewState>({ type: 'loading' });
 	let rows = $state<RowsState>({ type: 'loading' });
 	let target: BrowseOptions | undefined;
 	let validated: string | undefined;
 	let checking: Promise<Status> | undefined;
-	const client = createClient({ connectorId, connectorKey, prekey });
+	const client = createClient(options);
 	const cache = createBrowseCache({
 		load: (options) => browse(client, options),
 		ttl: CACHE_TTL_MS

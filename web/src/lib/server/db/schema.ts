@@ -8,7 +8,11 @@ export const connector = pgTable('connector', {
 		.notNull()
 		.references(() => user.id, { onDelete: 'cascade' }),
 	name: text('name').notNull(),
-	tokenHash: text('token_hash').notNull(),
+	tokenHash: text('token_hash'),
+	enrollmentTokenHash: text('enrollment_token_hash'),
+	enrollmentExpiresAt: timestamp('enrollment_expires_at', { withTimezone: true }),
+	identityKey: text('identity_key'),
+	pairingProof: text('pairing_proof'),
 	connectorVersion: text('connector_version'),
 	lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()

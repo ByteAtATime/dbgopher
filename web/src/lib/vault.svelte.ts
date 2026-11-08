@@ -1,5 +1,13 @@
 import { z } from 'zod';
-import { forgetAccountKey, loadAccountKey, parseKey, saveAccountKey } from './keys';
+import {
+	forgetAccountKey,
+	fromHex,
+	generateKey,
+	loadAccountKey,
+	saveAccountKey,
+	toHex
+} from './keys';
+import { userKeyFromSeed } from './protocol/channel';
 import { RelayError } from './protocol/client';
 import {
 	createVault,
@@ -98,19 +106,16 @@ const createVaultStore = (userId: string) => {
 		await open(stored, await unlockAccountKey(userId, stored, password, workerKdf));
 	};
 
-	const addConnectorKey = async (connectorId: string, key: string) => {
+	const write = async (change: (contents: Contents) => Contents) => {
 		for (let attempt = 0; attempt < MAX_CONFLICT_RETRIES; attempt++) {
 			if (state.type !== 'unlocked') throw new Error('The vault is locked.');
 			const { stored, accountKey, contents } = state;
-			const next = {
-				...contents,
-				connectorKeys: { ...contents.connectorKeys, [connectorId]: key }
-			};
+			const next = change(contents);
 			const record = { ...stored, encryptedContents: await sealContents(userId, accountKey, next) };
 			const revision = await putVault(record, stored.revision);
 			if (revision !== undefined) {
 				state = { type: 'unlocked', stored: { ...record, revision }, accountKey, contents: next };
-				return;
+				return next;
 			}
 			const latest = await fetchVault();
 			if (!latest) throw unexpected(404);
@@ -119,6 +124,24 @@ const createVaultStore = (userId: string) => {
 		throw unexpected(409);
 	};
 
+	const startPairing = async (connectorId: string) => {
+		const pairingSecret = generateKey();
+		const { userKey } = await write((contents) => ({
+			...contents,
+			connectors: { ...contents.connectors, [connectorId]: { state: 'pairing', pairingSecret } }
+		}));
+		const { publicKey } = await userKeyFromSeed(fromHex(userKey));
+		return { pairingSecret, userKey: toHex(publicKey) };
+	};
+
+	const completePairing = (connectorId: string, identityKey: string) =>
+		write((contents) => ({
+			...contents,
+			connectors: { ...contents.connectors, [connectorId]: { state: 'paired', identityKey } }
+		}));
+
+	const contents = () => (state.type === 'unlocked' ? state.contents : undefined);
+
 	return {
 		get state() {
 			return state;
@@ -126,11 +149,13 @@ const createVaultStore = (userId: string) => {
 		ensureLoaded: () => (loading ??= load()),
 		setup,
 		unlock,
-		addConnectorKey,
-		connectorKey: (connectorId: string) =>
-			state.type === 'unlocked'
-				? parseKey(state.contents.connectorKeys[connectorId] ?? '')
-				: undefined
+		startPairing,
+		completePairing,
+		connector: (connectorId: string) => contents()?.connectors[connectorId],
+		userKey: () => {
+			const userKey = contents()?.userKey;
+			return userKey === undefined ? undefined : fromHex(userKey);
+		}
 	};
 };
 

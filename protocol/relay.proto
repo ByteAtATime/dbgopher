@@ -3,10 +3,14 @@ syntax = "proto3";
 package dbgopher.relay;
 
 message ConnectorMessage {
+  reserved 3;
+  reserved "prekey";
+
   oneof message {
     Hello hello = 1;
     Response response = 2;
-    Prekey prekey = 3;
+    KeyConfig key_config = 4;
+    Enroll enroll = 5;
   }
 }
 
@@ -15,6 +19,7 @@ message RelayMessage {
     Welcome welcome = 1;
     Close close = 2;
     Request request = 3;
+    Enrolled enrolled = 4;
   }
 }
 
@@ -27,8 +32,21 @@ message Hello {
 
 message Welcome {}
 
-message Prekey {
-  bytes public_key = 1;
+message Enroll {
+  uint32 protocol_version = 1;
+  string connector_id = 2;
+  string enrollment_token = 3;
+  bytes identity_key = 4;
+  bytes proof = 5;
+}
+
+message Enrolled {
+  string token = 1;
+}
+
+message KeyConfig {
+  bytes config = 1;
+  bytes signature = 2;
 }
 
 message Close {
@@ -63,13 +81,12 @@ message Rejection {
   enum Reason {
     REASON_UNSPECIFIED = 0;
     REASON_UNDECRYPTABLE = 1;
-    REASON_EXPIRED = 2;
-    REASON_REPLAYED = 3;
     REASON_MALFORMED = 4;
     REASON_STALE_KEY = 6;
+    REASON_UNAUTHORIZED = 7;
 
-    reserved 5;
-    reserved "REASON_UNKNOWN_SESSION";
+    reserved 2, 3, 5;
+    reserved "REASON_EXPIRED", "REASON_REPLAYED", "REASON_UNKNOWN_SESSION";
   }
 
   Reason reason = 1;

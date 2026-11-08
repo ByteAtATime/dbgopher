@@ -1,8 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
@@ -10,7 +12,16 @@ import sodium from 'libsodium-wrappers';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { hashToken } from '../src/lib/server/tokens';
 import { connector, session, user } from '../src/lib/server/db/schema';
-import { createChannel, requestHeader } from '../src/lib/protocol/channel';
+import {
+	concat,
+	decode,
+	encode,
+	sealRequest,
+	userKeyFromSeed,
+	verifyKeyConfig,
+	type KeyConfig,
+	type UserKey
+} from '../src/lib/protocol/channel';
 import { ConnectorError, createClient, RelayError } from '../src/lib/protocol/client';
 import type { Column } from '../src/lib/protocol/bindings/Column';
 import type { Index } from '../src/lib/protocol/bindings/Index';
@@ -25,6 +36,7 @@ const CONNECTOR_BINARY = new URL('../../connector/target/debug/connector', impor
 	.pathname;
 const SERVER = new URL('../server.js', import.meta.url).pathname;
 const AUTH_SECRET = randomBytes(32).toString('hex');
+const HOUR_MS = 60 * 60_000;
 
 type Process = {
 	child: ChildProcess;
@@ -32,7 +44,10 @@ type Process = {
 	waitFor: (text: string) => Promise<void>;
 };
 
+type Pairing = { id: string; enrollmentToken: string; pairingSecret: Uint8Array };
+
 const children: ChildProcess[] = [];
+const stateDirs: string[] = [];
 
 const start = (command: string, args: string[], env: Record<string, string>): Process => {
 	const child = spawn(command, args, { env: { ...process.env, ...env } });
@@ -69,11 +84,19 @@ const freePort = async () => {
 
 const exitCode = async (child: ChildProcess) => child.exitCode ?? (await once(child, 'exit'))[0];
 
+const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
+
+const text = (value: string) => new TextEncoder().encode(value);
+
 let port: number;
 let relay: Process;
 let client: postgres.Sql;
 let targetUrl: string;
-let credentials: { id: string; token: string; key: Uint8Array };
+let ownerId: string;
+let credentials: Pairing & { stateDir: string };
+let identityKey: Uint8Array;
+let userSeed: Uint8Array;
+let userKey: UserKey;
 let ownerCookie: string;
 let strangerCookie: string;
 
@@ -85,7 +108,7 @@ const signIn = async (db: ReturnType<typeof drizzle>) => {
 		id: randomUUID(),
 		token,
 		userId: id,
-		expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+		expiresAt: new Date(Date.now() + HOUR_MS),
 		updatedAt: new Date()
 	});
 	const signature = createHmac('sha256', AUTH_SECRET).update(token).digest('base64');
@@ -115,53 +138,115 @@ const startRelay = async () => {
 	}
 };
 
+const createPairing = async (enrollmentExpiresAt = new Date(Date.now() + HOUR_MS)) => {
+	const enrollmentToken = randomBytes(32).toString('base64url');
+	const [row] = await drizzle(client)
+		.insert(connector)
+		.values({
+			userId: ownerId,
+			name: 'e2e',
+			enrollmentTokenHash: hashToken(enrollmentToken),
+			enrollmentExpiresAt
+		})
+		.returning({ id: connector.id });
+	return { id: row.id, enrollmentToken, pairingSecret: randomBytes(32) };
+};
+
+const pairingCode = ({ enrollmentToken, pairingSecret }: Pairing) =>
+	`${enrollmentToken}.${hex(pairingSecret)}`;
+
+const createStateDir = async () => {
+	const dir = await mkdtemp(join(tmpdir(), 'dbgopher-e2e-'));
+	stateDirs.push(dir);
+	return join(dir, 'state');
+};
+
 const startConnector = (overrides: Record<string, string> = {}) =>
 	start(CONNECTOR_BINARY, [], {
 		RELAY_URL: `ws://127.0.0.1:${port}/connector`,
 		CONNECTOR_ID: credentials.id,
-		CONNECTOR_TOKEN: credentials.token,
-		CONNECTOR_KEY: Buffer.from(credentials.key).toString('hex'),
+		CONNECTOR_STATE_DIR: credentials.stateDir,
 		DATABASE_URL: targetUrl,
 		...overrides
 	});
 
+const stopsWith = async (connector: Process, message: string) => {
+	expect(await exitCode(connector.child)).toBe(1);
+	expect(connector.output()).toContain(message);
+};
+
+const readIdentityKey = async (stateDir: string) => {
+	const seed = Buffer.from((await readFile(join(stateDir, 'identity'), 'utf8')).trim(), 'hex');
+	return sodium.crypto_sign_seed_keypair(seed).publicKey;
+};
+
+const connectorPath = (path: string, id = credentials.id) =>
+	`http://127.0.0.1:${port}/v1/connectors/${id}/${path}`;
+
 const post = (frame: Uint8Array, cookie = ownerCookie) =>
-	fetch(`http://127.0.0.1:${port}/v1/connectors/${credentials.id}/rpc`, {
+	fetch(connectorPath('rpc'), {
 		method: 'POST',
 		headers: { 'content-type': 'application/octet-stream', cookie },
 		body: new Uint8Array(frame)
 	});
 
-const getPrekey = (cookie = ownerCookie) =>
-	fetch(`http://127.0.0.1:${port}/v1/connectors/${credentials.id}/prekey`, {
-		headers: { cookie }
-	});
+const getKeyConfig = (cookie = ownerCookie) =>
+	fetch(connectorPath('key-config'), { headers: { cookie } });
 
-const fetchPrekey = async () => {
-	const response = await getPrekey();
+const getEnrollment = (cookie = ownerCookie, id = credentials.id) =>
+	fetch(connectorPath('enrollment', id), { headers: { cookie } });
+
+const fetchKeyConfig = async () => {
+	const response = await getKeyConfig();
 	expect(response.status).toBe(200);
-	return new Uint8Array(await response.arrayBuffer());
+	const keyConfig = await verifyKeyConfig(new Uint8Array(await response.arrayBuffer()), {
+		identityKey,
+		connectorId: credentials.id,
+		now: Date.now()
+	});
+	if (!keyConfig) throw new Error('The relay served a key config the connector did not sign');
+	return keyConfig;
 };
 
-const connect = async (key = credentials.key) =>
-	createChannel(key, credentials.id, await fetchPrekey());
+type SealOptions = { user?: UserKey; sentAt?: number; keyConfig?: KeyConfig };
 
-const send = async (body: unknown, key = credentials.key) => {
-	const channel = await connect(key);
-	const { id, sealed } = channel.sealRequest(body);
-	const response = await post(sealed);
+const seal = async (body: unknown, { user = userKey, sentAt, keyConfig }: SealOptions = {}) => {
+	const sealed = await sealRequest(
+		keyConfig ?? (await fetchKeyConfig()),
+		user,
+		encode({ id: randomUUID(), sentAt: sentAt ?? Date.now(), body })
+	);
 	return {
-		response,
-		open: async () => channel.openResponse(id, new Uint8Array(await response.arrayBuffer()))
+		frame: sealed.frame,
+		open: async (response: Response) =>
+			decode(await sealed.open(new Uint8Array(await response.arrayBuffer())))
 	};
 };
 
-const hello = (key = credentials.key) => send({ type: 'hello' }, key);
+const send = async (body: unknown, options?: SealOptions) => {
+	const { frame, open } = await seal(body, options);
+	const response = await post(frame);
+	return { response, open: async () => (await open(response)).body };
+};
 
-const browserClient = (connectorKey = credentials.key) =>
+const hello = (options?: SealOptions) => send({ type: 'hello' }, options);
+
+const resign = (signed: Uint8Array, user = userKey) =>
+	concat(
+		signed,
+		sodium.crypto_sign_detached(concat(text('dbgopher/request-sig'), signed), user.privateKey)
+	);
+
+const expectRejection = async (response: Response, rejection: string) => {
+	expect(response.status).toBe(422);
+	expect(await response.json()).toEqual({ rejection });
+};
+
+const browserClient = ({ seed = userSeed, identity = identityKey } = {}) =>
 	createClient({
 		connectorId: credentials.id,
-		connectorKey,
+		identityKey: identity,
+		userKey: seed,
 		fetch: (path, init) =>
 			fetch(`http://127.0.0.1:${port}${path}`, {
 				...init,
@@ -208,17 +293,23 @@ beforeAll(async () => {
 	targetUrl = await createTarget();
 	const db = drizzle(client);
 	const owner = await signIn(db);
+	ownerId = owner.userId;
 	ownerCookie = owner.cookie;
 	strangerCookie = (await signIn(db)).cookie;
-	const token = randomBytes(32).toString('base64url');
-	const [row] = await db
-		.insert(connector)
-		.values({ userId: owner.userId, name: 'e2e', tokenHash: hashToken(token) })
-		.returning({ id: connector.id });
-	credentials = { id: row.id, token, key: randomBytes(32) };
 	await sodium.ready;
+	userSeed = randomBytes(32);
+	userKey = await userKeyFromSeed(userSeed);
 	port = await freePort();
 	await startRelay();
+	credentials = { ...(await createPairing()), stateDir: await createStateDir() };
+	const paired = startConnector({
+		PAIRING_CODE: pairingCode(credentials),
+		USER_KEY: hex(userKey.publicKey)
+	});
+	await paired.waitFor('Connected to relay');
+	paired.child.kill();
+	await exitCode(paired.child);
+	identityKey = await readIdentityKey(credentials.stateDir);
 });
 
 afterEach(() => {
@@ -228,33 +319,117 @@ afterEach(() => {
 
 afterAll(async () => {
 	for (const child of children) child.kill();
+	await Promise.all(stateDirs.map((dir) => rm(dir, { recursive: true, force: true })));
 	await client.unsafe(`DROP DATABASE IF EXISTS ${TARGET_DATABASE} WITH (FORCE)`);
 	await client.end();
+});
+
+describe('pairing', () => {
+	it('publishes the identity key with a proof of the pairing secret', async () => {
+		const response = await getEnrollment();
+		expect(response.status).toBe(200);
+		const proof = createHmac('sha256', credentials.pairingSecret)
+			.update(text('dbgopher/pair'))
+			.update(Buffer.from(credentials.id.replaceAll('-', ''), 'hex'))
+			.update(identityKey)
+			.digest('hex');
+		expect(await response.json()).toEqual({
+			enrolled: true,
+			identityKey: hex(identityKey),
+			proof
+		});
+	});
+
+	it('keeps the identity key, token and allowlist private to the connector', async () => {
+		const mode = async (name: string) =>
+			(await stat(join(credentials.stateDir, name))).mode & 0o777;
+		expect(await mode('.')).toBe(0o700);
+		expect(await mode('identity')).toBe(0o600);
+		expect(await mode('token')).toBe(0o600);
+		expect(await mode('allowlist')).toBe(0o600);
+		expect(await readFile(join(credentials.stateDir, 'allowlist'), 'utf8')).toContain(
+			hex(userKey.publicKey)
+		);
+	});
+
+	it('reports connectors that have not paired yet', async () => {
+		const { id } = await createPairing();
+		const response = await getEnrollment(ownerCookie, id);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({ enrolled: false });
+	});
+
+	it.each([
+		[
+			'a wrong enrollment token',
+			async () => ({
+				...(await createPairing()),
+				enrollmentToken: randomBytes(32).toString('base64url')
+			})
+		],
+		['an expired enrollment token', () => createPairing(new Date(Date.now() - 1))],
+		['an enrollment token the connector already used', async () => credentials]
+	])('refuses to pair with %s', async (_, pairing) => {
+		const target = await pairing();
+		const stateDir = await createStateDir();
+		await stopsWith(
+			startConnector({
+				CONNECTOR_ID: target.id,
+				CONNECTOR_STATE_DIR: stateDir,
+				PAIRING_CODE: pairingCode(target),
+				USER_KEY: hex(userKey.publicKey)
+			}),
+			'REASON_UNAUTHORIZED'
+		);
+		expect(await (await getEnrollment(ownerCookie, target.id)).json()).not.toMatchObject({
+			identityKey: hex(await readIdentityKey(stateDir))
+		});
+	});
+
+	it('refuses to start unpaired without a pairing code', async () => {
+		await stopsWith(
+			startConnector({
+				CONNECTOR_STATE_DIR: await createStateDir(),
+				USER_KEY: hex(userKey.publicKey)
+			}),
+			'PAIRING_CODE is not set'
+		);
+	});
+
+	it('refuses to start without a user key', async () => {
+		await stopsWith(
+			startConnector({
+				CONNECTOR_STATE_DIR: await createStateDir(),
+				PAIRING_CODE: pairingCode(await createPairing())
+			}),
+			'lists no user keys'
+		);
+	});
 });
 
 describe('relay', () => {
 	it('requires a signed-in user', async () => {
 		await startConnector().waitFor('Connected to relay');
-		const channel = await connect();
-		const { sealed } = channel.sealRequest({ type: 'hello' });
-		expect((await post(sealed, '')).status).toBe(401);
-		expect((await getPrekey('')).status).toBe(401);
+		const { frame } = await seal({ type: 'hello' });
+		expect((await post(frame, '')).status).toBe(401);
+		expect((await getKeyConfig('')).status).toBe(401);
+		expect((await getEnrollment('')).status).toBe(401);
 	});
 
 	it("hides connectors from users who don't own them", async () => {
 		await startConnector().waitFor('Connected to relay');
-		const channel = await connect();
-		const { sealed } = channel.sealRequest({ type: 'hello' });
-		expect((await post(sealed, strangerCookie)).status).toBe(404);
-		expect((await getPrekey(strangerCookie)).status).toBe(404);
+		const { frame } = await seal({ type: 'hello' });
+		expect((await post(frame, strangerCookie)).status).toBe(404);
+		expect((await getKeyConfig(strangerCookie)).status).toBe(404);
+		expect((await getEnrollment(strangerCookie)).status).toBe(404);
 	});
 
 	it('reports connectors that are not connected as offline', async () => {
-		expect((await post(new Uint8Array(65))).status).toBe(503);
-		expect((await getPrekey()).status).toBe(503);
+		expect((await post(new Uint8Array(171))).status).toBe(503);
+		expect((await getKeyConfig()).status).toBe(503);
 	});
 
-	it('answers hello end to end with the published prekey', async () => {
+	it('answers hello end to end under a key config the connector signed', async () => {
 		await startConnector().waitFor('Connected to relay');
 		const { response, open } = await hello();
 		expect(response.status).toBe(200);
@@ -655,67 +830,97 @@ describe('relay', () => {
 
 	it('returns encrypted errors for unknown requests', async () => {
 		await startConnector().waitFor('Connected to relay');
-		const channel = await connect();
-		const { id, sealed } = channel.sealRequest({ type: 'teleport' });
-		const response = await post(sealed);
-		expect(channel.openResponse(id, new Uint8Array(await response.arrayBuffer()))).toMatchObject({
-			type: 'error'
-		});
+		const { response, open } = await send({ type: 'teleport' });
+		expect(response.status).toBe(200);
+		expect(await open()).toMatchObject({ type: 'error' });
 	});
 
-	it('rejects requests sealed with the wrong key', async () => {
+	it('rejects users the connector does not allow', async () => {
 		await startConnector().waitFor('Connected to relay');
-		const { response } = await hello(randomBytes(32));
-		expect(response.status).toBe(422);
-		expect(await response.json()).toEqual({ rejection: 'UNDECRYPTABLE' });
+		const stranger = await userKeyFromSeed(randomBytes(32));
+		await expectRejection((await hello({ user: stranger })).response, 'UNAUTHORIZED');
 	});
 
-	it('rejects replayed requests', async () => {
-		await startConnector().waitFor('Connected to relay');
-		const channel = await connect();
-		const { sealed } = channel.sealRequest({ type: 'hello' });
-		expect((await post(sealed)).status).toBe(200);
-		const replay = await post(sealed);
-		expect(replay.status).toBe(422);
-		expect(await replay.json()).toEqual({ rejection: 'REPLAYED' });
+	it('allows user keys added with USER_KEY', async () => {
+		const added = await userKeyFromSeed(randomBytes(32));
+		await startConnector({ USER_KEY: hex(added.publicKey) }).waitFor('Connected to relay');
+		const { response, open } = await hello({ user: added });
+		expect(response.status).toBe(200);
+		expect(await open()).toMatchObject({ type: 'hello' });
+		expect((await hello()).response.status).toBe(200);
 	});
 
-	it('rejects requests sealed to a prekey the connector does not hold', async () => {
+	it('rejects requests with a forged signature', async () => {
 		await startConnector().waitFor('Connected to relay');
-		const unknown = sodium.crypto_scalarmult_base(sodium.randombytes_buf(32));
-		const channel = await createChannel(credentials.key, credentials.id, unknown);
-		const response = await post(channel.sealRequest({ type: 'hello' }).sealed);
-		expect(response.status).toBe(422);
-		expect(await response.json()).toEqual({ rejection: 'STALE_KEY' });
+		const { frame } = await seal({ type: 'hello' });
+		frame[frame.length - 1] ^= 1;
+		await expectRejection(await post(frame), 'UNAUTHORIZED');
+	});
+
+	it('rejects signed requests the connector cannot decrypt', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const { frame } = await seal({ type: 'hello' });
+		const signed = frame.slice(0, -64);
+		signed[signed.length - 1] ^= 1;
+		await expectRejection(await post(resign(signed)), 'UNDECRYPTABLE');
+	});
+
+	it('refuses replayed requests with a sealed refusal', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const { frame, open } = await seal({ type: 'hello' });
+		expect((await post(frame)).status).toBe(200);
+		const replay = await post(frame);
+		expect(replay.status).toBe(200);
+		expect((await open(replay)).body).toEqual({ refusal: 'replayed' });
+	});
+
+	it('refuses expired requests with a sealed refusal that carries its clock', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const { frame, open } = await seal({ type: 'hello' }, { sentAt: Date.now() - 10 * 60_000 });
+		const response = await post(frame);
+		expect(response.status).toBe(200);
+		const refusal = await open(response);
+		expect(refusal.body).toEqual({ refusal: 'expired' });
+		expect(Math.abs(refusal.sentAt - Date.now())).toBeLessThan(5_000);
+	});
+
+	it('rejects requests sealed to a key config the connector does not hold', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const keyConfig = {
+			prekey: sodium.crypto_scalarmult_base(sodium.randombytes_buf(32)),
+			expiresAt: Date.now() + HOUR_MS,
+			hash: randomBytes(32)
+		};
+		await expectRejection((await hello({ keyConfig })).response, 'STALE_KEY');
 	});
 
 	it.each([
-		['truncated', async () => Uint8Array.of(3, 1, 2, 3)],
+		['truncated', async () => Uint8Array.of(4, 1, 2, 3)],
 		[
-			'low-order browser key',
+			'from another protocol version',
 			async () => {
-				const { sealed } = (await connect()).sealRequest({ type: 'hello' });
-				const header = requestHeader(sealed.subarray(1, 33), new Uint8Array(32));
-				return new Uint8Array([...header, ...sealed.subarray(header.length)]);
+				const { frame } = await seal({ type: 'hello' });
+				frame[0] = 3;
+				return frame;
 			}
 		]
-	])('rejects %s request frames', async (_, frame) => {
+	])('rejects request frames that are %s', async (_, frame) => {
 		await startConnector().waitFor('Connected to relay');
-		const response = await post(await frame());
-		expect(response.status).toBe(422);
-		expect(await response.json()).toEqual({ rejection: 'MALFORMED' });
+		await expectRejection(await post(await frame()), 'MALFORMED');
 	});
 
 	it('stops connectors with an invalid token', async () => {
-		const connector = startConnector({ CONNECTOR_TOKEN: 'wrong' });
-		expect(await exitCode(connector.child)).toBe(1);
-		expect(connector.output()).toContain('REASON_UNAUTHORIZED');
+		const stateDir = await createStateDir();
+		await mkdir(stateDir);
+		await writeFile(join(stateDir, 'token'), 'wrong\n');
+		await stopsWith(
+			startConnector({ CONNECTOR_STATE_DIR: stateDir, USER_KEY: hex(userKey.publicKey) }),
+			'REASON_UNAUTHORIZED'
+		);
 	});
 
 	it('stops connectors with an unknown ID', async () => {
-		const connector = startConnector({ CONNECTOR_ID: randomUUID() });
-		expect(await exitCode(connector.child)).toBe(1);
-		expect(connector.output()).toContain('REASON_UNAUTHORIZED');
+		await stopsWith(startConnector({ CONNECTOR_ID: randomUUID() }), 'REASON_UNAUTHORIZED');
 	});
 
 	it('records when connectors were last seen', async () => {
@@ -830,7 +1035,7 @@ describe('browser client', () => {
 		]);
 	});
 
-	it('fetches a fresh prekey when the connector restarts', async () => {
+	it('fetches a fresh key config when the connector restarts', async () => {
 		const first = startConnector();
 		await first.waitFor('Connected to relay');
 		const client = browserClient();
@@ -846,13 +1051,22 @@ describe('browser client', () => {
 		await expect(client.hello()).rejects.toMatchObject({ reason: 'offline' });
 	});
 
-	it('reports keys the connector cannot use', async () => {
+	it('reports user keys the connector does not allow', async () => {
 		await startConnector().waitFor('Connected to relay');
-		const error = await browserClient(randomBytes(32))
+		const error = await browserClient({ seed: randomBytes(32) })
 			.hello()
 			.catch((error: unknown) => error);
 		expect(error).toBeInstanceOf(RelayError);
-		expect(error).toMatchObject({ reason: 'undecryptable' });
+		expect(error).toMatchObject({ reason: 'unauthorized' });
+	});
+
+	it('refuses key configs the connector did not sign', async () => {
+		await startConnector().waitFor('Connected to relay');
+		const error = await browserClient({ identity: sodium.crypto_sign_keypair().publicKey })
+			.hello()
+			.catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(RelayError);
+		expect(error).toMatchObject({ reason: 'untrusted' });
 	});
 
 	it('reports database errors', async () => {

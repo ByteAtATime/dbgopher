@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
 use prost::Message as _;
 use serde_json::Value;
@@ -14,18 +15,25 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async_with_conf
 use crate::RELAY_PROTOCOL_VERSION;
 use crate::config::Config;
 use crate::database::Database;
-use crate::envelope::{self, Channels, Responder};
+use crate::envelope::{self, Gateway, Opened, Responder};
 use crate::messages::{self, Request, Response};
+use crate::pairing::PairingCode;
 use crate::relay::{
-    self, Close, ConnectorMessage, Hello, Prekey, Rejection, RelayMessage, connector_message,
-    rejection, relay_message, response,
+    self, Close, ConnectorMessage, Enroll, Enrolled, Hello, KeyConfig, Rejection, RelayMessage,
+    connector_message, rejection, relay_message, response,
 };
+use crate::state::State;
+
+type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+const READ_TIMEOUT: Duration = Duration::from_secs(90);
+const MAX_FRAME_SIZE: usize = 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
-enum Error {
+pub enum Error {
     #[error(transparent)]
     WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
-    #[error("invalid frame from relay: {0}")]
+    #[error("invalid frame from relay")]
     Decode(#[from] prost::DecodeError),
     #[error(transparent)]
     Envelope(#[from] envelope::Error),
@@ -33,13 +41,42 @@ enum Error {
     Timeout(#[from] tokio::time::error::Elapsed),
     #[error("relay closed the connection")]
     Closed,
+    #[error("relay refused the connector ({}): {}", .0.reason().as_str_name(), .0.detail)]
+    Refused(Close),
 }
 
-pub async fn run(config: &Config, database: Arc<Database>) -> Close {
+pub async fn enroll(
+    config: &Config,
+    identity: &SigningKey,
+    code: &PairingCode,
+) -> Result<String, Error> {
+    let mut socket = open(config).await?;
+    let identity_key = identity.verifying_key();
+    send(
+        &mut socket,
+        connector_message::Message::Enroll(Enroll {
+            protocol_version: RELAY_PROTOCOL_VERSION,
+            connector_id: config.connector_id.to_string(),
+            enrollment_token: code.enrollment_token.clone(),
+            identity_key: identity_key.to_bytes().to_vec(),
+            proof: code.proof(config.connector_id, &identity_key).to_vec(),
+        }),
+    )
+    .await?;
+    loop {
+        match receive(&mut socket).await? {
+            Some(relay_message::Message::Enrolled(Enrolled { token })) => return Ok(token),
+            Some(relay_message::Message::Close(close)) => return Err(Error::Refused(close)),
+            _ => {}
+        }
+    }
+}
+
+pub async fn run(config: &Config, state: &State, token: &str, database: Arc<Database>) -> Close {
     let mut backoff = Backoff::default();
     loop {
         let session = async {
-            Session::connect(config, database.clone())
+            Session::connect(config, state, token, database.clone())
                 .await?
                 .run(&mut backoff)
                 .await
@@ -75,8 +112,8 @@ impl Default for Backoff {
 }
 
 struct Session {
-    socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
-    channels: Channels,
+    socket: Socket,
+    gateway: Gateway,
     database: Arc<Database>,
 }
 
@@ -87,26 +124,27 @@ struct Handled {
 }
 
 impl Session {
-    const READ_TIMEOUT: Duration = Duration::from_secs(90);
-    const MAX_FRAME_SIZE: usize = 1024 * 1024;
-
-    async fn connect(config: &Config, database: Arc<Database>) -> Result<Self, Error> {
-        let websocket_config = WebSocketConfig::default()
-            .max_message_size(Some(Self::MAX_FRAME_SIZE))
-            .max_frame_size(Some(Self::MAX_FRAME_SIZE));
-        let (socket, _) =
-            connect_async_with_config(&config.relay_url, Some(websocket_config), false).await?;
+    async fn connect(
+        config: &Config,
+        state: &State,
+        token: &str,
+        database: Arc<Database>,
+    ) -> Result<Self, Error> {
         let mut session = Self {
-            socket,
-            channels: Channels::new(config.connector_key, config.connector_id.as_str()),
+            socket: open(config).await?,
+            gateway: Gateway::new(
+                state.identity.clone(),
+                config.connector_id,
+                state.users.clone(),
+            ),
             database,
         };
         session
             .send(connector_message::Message::Hello(Hello {
                 protocol_version: RELAY_PROTOCOL_VERSION,
                 connector_version: env!("CARGO_PKG_VERSION").into(),
-                connector_id: config.connector_id.clone(),
-                token: config.token.clone(),
+                connector_id: config.connector_id.to_string(),
+                token: token.into(),
             }))
             .await?;
         Ok(session)
@@ -114,33 +152,28 @@ impl Session {
 
     async fn run(mut self, backoff: &mut Backoff) -> Result<Close, Error> {
         let (handled_tx, mut handled_rx) = mpsc::unbounded_channel();
-        let mut rotation = interval_at(Instant::now() + Channels::ROTATION, Channels::ROTATION);
+        let mut rotation = interval_at(Instant::now() + Gateway::ROTATION, Gateway::ROTATION);
         loop {
             tokio::select! {
-                message = timeout(Self::READ_TIMEOUT, self.socket.next()) => {
-                    let Message::Binary(data) = message?.ok_or(Error::Closed)?? else {
-                        continue;
-                    };
-                    match RelayMessage::decode(data)?.message {
-                        Some(relay_message::Message::Welcome(_)) => {
-                            self.publish_prekey().await?;
-                            eprintln!("Connected to relay");
-                            backoff.reset();
-                        }
-                        Some(relay_message::Message::Close(close)) => return Ok(close),
-                        Some(relay_message::Message::Request(request)) => {
-                            self.accept(request, &handled_tx).await?;
-                        }
-                        None => {}
+                message = receive(&mut self.socket) => match message? {
+                    Some(relay_message::Message::Welcome(_)) => {
+                        self.publish_key_config().await?;
+                        eprintln!("Connected to relay");
+                        backoff.reset();
                     }
-                }
+                    Some(relay_message::Message::Close(close)) => return Ok(close),
+                    Some(relay_message::Message::Request(request)) => {
+                        self.accept(request, &handled_tx).await?;
+                    }
+                    Some(relay_message::Message::Enrolled(_)) | None => {}
+                },
                 Some(Handled { request_id, responder, response }) = handled_rx.recv() => {
                     let sealed = responder.seal(&response)?;
                     self.respond(request_id, response::Result::Sealed(sealed)).await?;
                 }
                 _ = rotation.tick() => {
-                    self.channels.rotate();
-                    self.publish_prekey().await?;
+                    self.gateway.rotate();
+                    self.publish_key_config().await?;
                 }
             }
         }
@@ -151,11 +184,23 @@ impl Session {
         request: relay::Request,
         handled_tx: &mpsc::UnboundedSender<Handled>,
     ) -> Result<(), Error> {
-        let (envelope, responder) = match self.channels.open::<Value>(&request.sealed) {
+        let Opened {
+            responder,
+            envelope,
+        } = match self.gateway.open::<Value>(&request.sealed) {
             Ok(opened) => opened,
             Err(error) => {
                 let rejection = response::Result::Rejection(Rejection::from(&error));
                 return self.respond(request.id, rejection).await;
+            }
+        };
+        let envelope = match envelope {
+            Ok(envelope) => envelope,
+            Err(refusal) => {
+                let sealed = responder.seal(&refusal)?;
+                return self
+                    .respond(request.id, response::Result::Sealed(sealed))
+                    .await;
             }
         };
         let database = self.database.clone();
@@ -176,11 +221,14 @@ impl Session {
         Ok(())
     }
 
-    async fn publish_prekey(&mut self) -> Result<(), Error> {
-        let prekey = Prekey {
-            public_key: self.channels.prekey().to_vec(),
+    async fn publish_key_config(&mut self) -> Result<(), Error> {
+        let signed = self.gateway.key_config();
+        let key_config = KeyConfig {
+            config: signed.config.clone(),
+            signature: signed.signature.to_bytes().to_vec(),
         };
-        self.send(connector_message::Message::Prekey(prekey)).await
+        self.send(connector_message::Message::KeyConfig(key_config))
+            .await
     }
 
     async fn respond(&mut self, request_id: u64, result: response::Result) -> Result<(), Error> {
@@ -193,25 +241,45 @@ impl Session {
     }
 
     async fn send(&mut self, message: connector_message::Message) -> Result<(), Error> {
-        let frame = ConnectorMessage {
-            message: Some(message),
-        };
-        Ok(self
-            .socket
-            .send(Message::Binary(frame.encode_to_vec().into()))
-            .await?)
+        send(&mut self.socket, message).await
+    }
+}
+
+async fn open(config: &Config) -> Result<Socket, Error> {
+    let websocket_config = WebSocketConfig::default()
+        .max_message_size(Some(MAX_FRAME_SIZE))
+        .max_frame_size(Some(MAX_FRAME_SIZE));
+    let (socket, _) =
+        connect_async_with_config(&config.relay_url, Some(websocket_config), false).await?;
+    Ok(socket)
+}
+
+async fn send(socket: &mut Socket, message: connector_message::Message) -> Result<(), Error> {
+    let frame = ConnectorMessage {
+        message: Some(message),
+    };
+    Ok(socket
+        .send(Message::Binary(frame.encode_to_vec().into()))
+        .await?)
+}
+
+async fn receive(socket: &mut Socket) -> Result<Option<relay_message::Message>, Error> {
+    loop {
+        if let Message::Binary(data) = timeout(READ_TIMEOUT, socket.next())
+            .await?
+            .ok_or(Error::Closed)??
+        {
+            return Ok(RelayMessage::decode(data)?.message);
+        }
     }
 }
 
 impl From<&envelope::Error> for Rejection {
     fn from(error: &envelope::Error) -> Self {
         let reason = match error {
-            envelope::Error::Expired => rejection::Reason::Expired,
-            envelope::Error::Replayed => rejection::Reason::Replayed,
             envelope::Error::StaleKey => rejection::Reason::StaleKey,
-            envelope::Error::UnsupportedFrame(_) | envelope::Error::Undecryptable => {
-                rejection::Reason::Undecryptable
-            }
+            envelope::Error::Unauthorized => rejection::Reason::Unauthorized,
+            envelope::Error::Undecryptable => rejection::Reason::Undecryptable,
             envelope::Error::Malformed
             | envelope::Error::Compression(_)
             | envelope::Error::Json(_) => rejection::Reason::Malformed,

@@ -10,15 +10,15 @@ const withStorage = <T>(action: (storage: Storage) => T) => {
 	}
 };
 
-const toHex = (bytes: Uint8Array) =>
+export const toHex = (bytes: Uint8Array) =>
 	Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+
+export const fromHex = (hex: string) =>
+	Uint8Array.from(hex.match(/../g) ?? [], (byte) => parseInt(byte, 16));
 
 export const parseKey = (hex: string) => {
 	const trimmed = hex.trim();
-	if (!KEY_PATTERN.test(trimmed)) return undefined;
-	return Uint8Array.from({ length: 32 }, (_, index) =>
-		parseInt(trimmed.slice(index * 2, index * 2 + 2), 16)
-	);
+	return KEY_PATTERN.test(trimmed) ? fromHex(trimmed) : undefined;
 };
 
 export const loadAccountKey = (userId: string) =>
