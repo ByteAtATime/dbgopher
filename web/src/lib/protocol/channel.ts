@@ -20,7 +20,7 @@ const envelopeSchema = z.object({
 	body: z.unknown()
 }) satisfies z.ZodType<Envelope<unknown>>;
 
-const concat = (...parts: Uint8Array[]) => {
+export const concat = (...parts: Uint8Array[]) => {
 	const joined = new Uint8Array(parts.reduce((length, part) => length + part.length, 0));
 	let offset = 0;
 	for (const part of parts) {
