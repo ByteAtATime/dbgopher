@@ -7,6 +7,7 @@ pub mod envelope;
 pub mod messages;
 pub mod overview;
 pub mod palette;
+pub mod state;
 
 pub mod relay {
     include!(concat!(env!("OUT_DIR"), "/dbgopher.relay.rs"));
@@ -19,4 +20,8 @@ pub fn error_chain(error: &dyn std::error::Error) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(": ")
+}
+
+fn decode_key(hex: &str) -> Option<[u8; 32]> {
+    hex::decode(hex.trim()).ok()?.try_into().ok()
 }
