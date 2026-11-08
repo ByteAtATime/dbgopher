@@ -6,7 +6,8 @@ message ConnectorMessage {
   oneof message {
     Hello hello = 1;
     Response response = 2;
-    Prekey prekey = 3;
+    KeyConfig key_config = 3;
+    Enroll enroll = 4;
   }
 }
 
@@ -15,28 +16,39 @@ message RelayMessage {
     Welcome welcome = 1;
     Close close = 2;
     Request request = 3;
+    Enrolled enrolled = 4;
   }
 }
 
 message Hello {
-  uint32 protocol_version = 1;
-  string connector_version = 2;
-  string connector_id = 3;
-  string token = 4;
+  string connector_version = 1;
+  string connector_id = 2;
+  string token = 3;
 }
 
 message Welcome {}
 
-message Prekey {
-  bytes public_key = 1;
+message Enroll {
+  string connector_id = 1;
+  string enrollment_token = 2;
+  bytes identity_key = 3;
+  bytes proof = 4;
+}
+
+message Enrolled {
+  string token = 1;
+}
+
+message KeyConfig {
+  bytes config = 1;
+  bytes signature = 2;
 }
 
 message Close {
   enum Reason {
     REASON_UNSPECIFIED = 0;
-    REASON_UPDATE_REQUIRED = 1;
-    REASON_UNAUTHORIZED = 2;
-    REASON_REPLACED = 3;
+    REASON_UNAUTHORIZED = 1;
+    REASON_REPLACED = 2;
   }
 
   Reason reason = 1;
@@ -44,10 +56,8 @@ message Close {
 }
 
 message Request {
-  reserved 2;
-  reserved "session_id";
   uint64 id = 1;
-  bytes sealed = 3;
+  bytes sealed = 2;
 }
 
 message Response {
@@ -63,13 +73,9 @@ message Rejection {
   enum Reason {
     REASON_UNSPECIFIED = 0;
     REASON_UNDECRYPTABLE = 1;
-    REASON_EXPIRED = 2;
-    REASON_REPLAYED = 3;
-    REASON_MALFORMED = 4;
-    REASON_STALE_KEY = 6;
-
-    reserved 5;
-    reserved "REASON_UNKNOWN_SESSION";
+    REASON_MALFORMED = 2;
+    REASON_STALE_KEY = 3;
+    REASON_UNAUTHORIZED = 4;
   }
 
   Reason reason = 1;

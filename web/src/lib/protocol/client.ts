@@ -9,8 +9,16 @@ import type { PaletteOutcome } from './bindings/PaletteOutcome';
 import type { PaletteTarget } from './bindings/PaletteTarget';
 import type { Request } from './bindings/Request';
 import type { Response as ConnectorResponse } from './bindings/Response';
+import type { Refusal } from './bindings/Refusal';
 import type { Table } from './bindings/Table';
-import { createChannel } from './channel';
+import {
+	decode,
+	encode,
+	sealRequest,
+	userKeyFromSeed,
+	verifyKeyConfig,
+	type KeyConfig
+} from './channel';
 
 export type Hello = Extract<ConnectorResponse, { type: 'hello' }>;
 export type Overview = Extract<ConnectorResponse, { type: 'overview' }>;
@@ -25,6 +33,8 @@ export type RelayErrorReason =
 	| 'timeout'
 	| 'tooLarge'
 	| 'undecryptable'
+	| 'unauthorized'
+	| 'untrusted'
 	| 'expired'
 	| 'replayed'
 	| 'staleKey'
@@ -53,12 +63,16 @@ export type Fetch = (path: string, init: RequestInit) => Promise<Response>;
 
 export type ClientOptions = {
 	connectorId: string;
-	connectorKey: Uint8Array;
-	prekey?: Uint8Array;
+	identityKey: Uint8Array;
+	userKey: Uint8Array;
+	keyConfig?: Uint8Array;
 	fetch?: Fetch;
+	now?: () => number;
 };
 
 const CAPABILITIES = ['overview', 'browse', 'palette'] as const satisfies readonly Capability[];
+
+const KEY_CONFIG_REFRESH_MARGIN_MS = 5 * 60_000;
 
 const isCapability = (value: string): value is Capability =>
 	CAPABILITIES.some((capability) => capability === value);
@@ -175,24 +189,29 @@ const errorSchema = z.object({
 
 const rejectionSchema = z.object({ rejection: z.string() });
 
+const refusalSchema = z.object({
+	refusal: z.enum(['expired', 'replayed'])
+}) satisfies z.ZodType<Refusal>;
+
 const REJECTED = 'The connector rejected the request.';
 
+const UNTRUSTED = 'The relay served a connector key that could not be verified.';
+
+const REFUSALS: Record<Refusal['refusal'], string> = {
+	expired:
+		'The connector rejected the request as expired. Check the clocks on this device and on the connector.',
+	replayed: 'The connector rejected the request as a replay.'
+};
+
 const REJECTIONS = new Map<string, [RelayErrorReason, string]>([
+	['UNDECRYPTABLE', ['undecryptable', 'The connector could not decrypt the request.']],
 	[
-		'UNDECRYPTABLE',
+		'UNAUTHORIZED',
 		[
-			'undecryptable',
-			"The connector could not decrypt the request. Check that the key matches the connector's CONNECTOR_KEY."
+			'unauthorized',
+			'The connector does not allow your user key. Restart it with USER_KEY set to add the key to its allowlist.'
 		]
 	],
-	[
-		'EXPIRED',
-		[
-			'expired',
-			'The connector rejected the request as expired. Check the clocks on this device and on the connector.'
-		]
-	],
-	['REPLAYED', ['replayed', 'The connector rejected the request as a replay.']],
 	['STALE_KEY', ['staleKey', REJECTED]],
 	['MALFORMED', ['malformed', 'The connector could not read the request. It may need updating.']]
 ]);
@@ -218,9 +237,11 @@ const toRelayError = async (response: Response) => {
 
 export const createClient = ({
 	connectorId,
-	connectorKey,
-	prekey,
-	fetch = globalThis.fetch
+	identityKey,
+	userKey,
+	keyConfig: seededKeyConfig,
+	fetch = globalThis.fetch,
+	now = Date.now
 }: ClientOptions) => {
 	const relay = async (path: string, init: RequestInit) => {
 		const response = await fetch(
@@ -233,39 +254,82 @@ export const createClient = ({
 		return new Uint8Array(await response.arrayBuffer());
 	};
 
-	const post = (sealed: Uint8Array) =>
+	const post = (frame: Uint8Array) =>
 		relay('rpc', {
 			method: 'POST',
 			headers: { 'content-type': 'application/octet-stream' },
-			body: new Uint8Array(sealed)
+			body: new Uint8Array(frame)
 		});
 
-	let channel: ReturnType<typeof createChannel> | undefined;
+	const user = userKeyFromSeed(userKey);
+	let clockOffset = 0;
+	const clock = () => now() + clockOffset;
 
-	const open = async (known?: Uint8Array) =>
-		createChannel(connectorKey, connectorId, known ?? (await relay('prekey', { method: 'GET' })));
+	let keyConfig: Promise<KeyConfig> | undefined;
 
-	const connect = (known?: Uint8Array) => {
-		const pending = open(known);
-		channel = pending;
+	const load = async (signed?: Uint8Array) => {
+		const verified = await verifyKeyConfig(
+			signed ?? (await relay('key-config', { method: 'GET' })),
+			{
+				identityKey,
+				connectorId,
+				now: clock()
+			}
+		);
+		if (!verified) throw new RelayError('untrusted', UNTRUSTED);
+		return verified;
+	};
+
+	const refresh = (signed?: Uint8Array) => {
+		const pending = load(signed);
+		keyConfig = pending;
 		pending.catch(() => {
-			if (channel === pending) channel = undefined;
+			if (keyConfig === pending) keyConfig = undefined;
 		});
 		return pending;
 	};
 
-	if (prekey) connect(prekey);
+	if (seededKeyConfig) refresh(seededKeyConfig);
 
-	const send = async (body: Request, retry = true): Promise<unknown> => {
-		const pending = channel ?? connect();
-		const { sealRequest, openResponse } = await pending;
-		const { id, sealed } = sealRequest(body);
-		try {
-			return openResponse(id, await post(sealed));
-		} catch (error) {
-			if (!retry || !(error instanceof RelayError) || error.reason !== 'staleKey') throw error;
-			if (channel === pending) channel = undefined;
-			return send(body, false);
+	const usableKeyConfig = async () => {
+		const pending = keyConfig ?? refresh();
+		const config = await pending;
+		if (config.expiresAt - KEY_CONFIG_REFRESH_MARGIN_MS > clock()) return { pending, config };
+		if (keyConfig === pending) keyConfig = undefined;
+		const next = keyConfig ?? refresh();
+		return { pending: next, config: await next };
+	};
+
+	const send = async (body: Request) => {
+		const id = crypto.randomUUID();
+		const retried = { staleKey: false, clock: false };
+		for (;;) {
+			const { pending, config } = await usableKeyConfig();
+			const { frame, open } = await sealRequest(
+				config,
+				await user,
+				encode({ id, sentAt: clock(), body })
+			);
+			let response: Uint8Array;
+			try {
+				response = await post(frame);
+			} catch (error) {
+				if (retried.staleKey || !(error instanceof RelayError) || error.reason !== 'staleKey')
+					throw error;
+				retried.staleKey = true;
+				if (keyConfig === pending) keyConfig = undefined;
+				continue;
+			}
+			const envelope = decode(await open(response));
+			if (envelope.id !== id) throw new Error(`Expected a response to ${id}, got ${envelope.id}`);
+			const refusal = refusalSchema.safeParse(envelope.body);
+			if (!refusal.success) return envelope.body;
+			if (refusal.data.refusal === 'expired' && !retried.clock) {
+				retried.clock = true;
+				clockOffset = envelope.sentAt - now();
+				continue;
+			}
+			throw new RelayError(refusal.data.refusal, REFUSALS[refusal.data.refusal]);
 		}
 	};
 

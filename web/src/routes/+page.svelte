@@ -8,11 +8,11 @@
 	import VaultGate from '#lib/components/VaultGate.svelte';
 	import { Button } from '#lib/components/ui/button/index.ts';
 	import { Input } from '#lib/components/ui/input/index.ts';
-	import { generateKey } from '#lib/keys.ts';
+	import PairingStatus from '#lib/components/PairingStatus.svelte';
 	import { forgetVault, type VaultStore } from '#lib/vault.svelte.ts';
 	import type { PageProps, SubmitFunction } from './$types';
 
-	type Created = { id: string; token: string; key: string };
+	type Created = { id: string; pairingCode: string; userKey: string };
 
 	let { data }: PageProps = $props();
 
@@ -24,7 +24,7 @@
 	);
 
 	const command = (connector: Created) =>
-		`RELAY_URL=${relayUrl} CONNECTOR_ID=${connector.id} CONNECTOR_TOKEN=${connector.token} CONNECTOR_KEY=${connector.key} DATABASE_URL=<database url> cargo run --manifest-path connector/Cargo.toml`;
+		`RELAY_URL=${relayUrl} CONNECTOR_ID=${connector.id} PAIRING_CODE=${connector.pairingCode} USER_KEY=${connector.userKey} CONNECTOR_STATE_DIR=$HOME/.local/state/dbgopher/${connector.id} DATABASE_URL=<database url> cargo run --manifest-path connector/Cargo.toml`;
 
 	const create =
 		(vault: VaultStore): SubmitFunction =>
@@ -32,10 +32,10 @@
 		async ({ result, update }) => {
 			failure = undefined;
 			if (result.type === 'success' && result.data) {
-				const connector = { ...result.data, key: generateKey() };
+				const { id, enrollmentToken } = result.data;
 				try {
-					await vault.addConnectorKey(connector.id, connector.key);
-					created = connector;
+					const { pairingSecret, userKey } = await vault.startPairing(id);
+					created = { id, pairingCode: `${enrollmentToken}.${pairingSecret}`, userKey };
 				} catch (error) {
 					failure = error instanceof Error ? error.message : String(error);
 				}
@@ -87,7 +87,11 @@
 							class="overflow-x-auto rounded bg-muted p-3 font-mono text-xs break-all whitespace-pre-wrap">{command(
 								created
 							)}</pre>
-						<Button href={resolve('/c/[id]', { id: created.id })}>Go to connector</Button>
+						{#if vault.connector(created.id)?.state === 'paired'}
+							<Button href={resolve('/c/[id]', { id: created.id })}>Go to connector</Button>
+						{:else}
+							<PairingStatus {vault} connectorId={created.id} />
+						{/if}
 					{/if}
 					<form
 						method="POST"

@@ -1,5 +1,6 @@
 import sodium from 'libsodium-wrappers';
 import { z } from 'zod';
+import { generateKey } from '../keys';
 import { concat } from '../protocol/channel';
 import type { Kdf } from './kdf';
 import type { KdfParams, VaultRecord } from './record';
@@ -20,9 +21,19 @@ const NONCE_LENGTH = 24;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+const keySchema = z.string().regex(/^[0-9a-f]{64}$/);
+
+const vaultConnectorSchema = z.discriminatedUnion('state', [
+	z.object({ state: z.literal('pairing'), pairingSecret: keySchema }),
+	z.object({ state: z.literal('paired'), identityKey: keySchema })
+]);
+
 const contentsSchema = z.object({
-	connectorKeys: z.record(z.string(), z.string()).default({})
+	userKey: keySchema,
+	connectors: z.record(z.string(), vaultConnectorSchema)
 });
+
+export type VaultConnector = z.infer<typeof vaultConnectorSchema>;
 
 export type Contents = z.infer<typeof contentsSchema>;
 
@@ -96,7 +107,7 @@ export const createVault = async (userId: string, password: string, kdf: Kdf) =>
 	const salt = sodium.randombytes_buf(SALT_LENGTH);
 	const accountKey = sodium.randombytes_buf(ACCOUNT_KEY_LENGTH);
 	const wrappingKey = await kdf(password, salt, KDF_PARAMS);
-	const contents: Contents = { connectorKeys: {} };
+	const contents: Contents = { userKey: generateKey(), connectors: {} };
 	const record: VaultRecord = {
 		salt: toBase64(salt),
 		kdfParams: KDF_PARAMS,
