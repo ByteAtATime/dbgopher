@@ -1,6 +1,12 @@
-import { integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { integer, jsonb, pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import type { KdfParams } from '../../vault/record.ts';
 import { user } from './auth.schema.ts';
+
+export const connectorEnvironment = pgEnum('connector_environment', [
+	'production',
+	'staging',
+	'development'
+]);
 
 export const connector = pgTable('connector', {
 	id: uuid('id').primaryKey().defaultRandom(),
@@ -8,6 +14,7 @@ export const connector = pgTable('connector', {
 		.notNull()
 		.references(() => user.id, { onDelete: 'cascade' }),
 	name: text('name').notNull(),
+	environment: connectorEnvironment('environment').notNull().default('production'),
 	tokenHash: text('token_hash'),
 	enrollmentTokenHash: text('enrollment_token_hash'),
 	enrollmentExpiresAt: timestamp('enrollment_expires_at', { withTimezone: true }),

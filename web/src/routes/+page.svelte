@@ -16,6 +16,12 @@
 
 	let { data }: PageProps = $props();
 
+	const environments = {
+		production: { label: 'Production', class: 'bg-red-500/15 text-red-400' },
+		staging: { label: 'Staging', class: 'bg-amber-500/15 text-amber-400' },
+		development: { label: 'Development', class: 'bg-muted text-muted-foreground' }
+	} satisfies Record<PageProps['data']['connectors'][number]['environment'], unknown>;
+
 	let created = $state<Created>();
 	let failure = $state<string>();
 
@@ -53,12 +59,12 @@
 			<h2 class="font-semibold">Connectors</h2>
 			{#if data.connectors.length > 0}
 				<Tooltip.Provider>
-					<ul class="divide-y rounded-md border">
+					<ul class="grid grid-cols-[1fr_auto_auto] divide-y rounded-md border">
 						{#each data.connectors as connector (connector.id)}
-							<li>
+							<li class="col-span-3 grid grid-cols-subgrid">
 								<a
 									href={resolve('/c/[id]', { id: connector.id })}
-									class="flex justify-between gap-4 p-3 text-sm hover:bg-muted"
+									class="col-span-3 grid grid-cols-subgrid items-center gap-4 p-3 text-sm hover:bg-muted"
 								>
 									<span>
 										{connector.name}
@@ -71,6 +77,11 @@
 											Offline
 										{/if})
 									</span>
+									<span
+										class="justify-self-start rounded-md px-2 py-0.5 text-xs font-medium {environments[
+											connector.environment
+										].class}">{environments[connector.environment].label}</span
+									>
 									<span class="text-muted-foreground"
 										><Timestamp instant={instantOf(connector.createdAt)} /></span
 									>

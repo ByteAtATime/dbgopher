@@ -81,6 +81,7 @@ export const listConnectors = (userId: string) =>
 		.select({
 			id: connector.id,
 			name: connector.name,
+			environment: connector.environment,
 			lastSeenAt: connector.lastSeenAt,
 			createdAt: connector.createdAt
 		})
