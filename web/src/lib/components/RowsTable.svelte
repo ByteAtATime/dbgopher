@@ -12,6 +12,7 @@
 	import { toast } from 'svelte-sonner';
 	import { selectedText, toHtml, toTsv } from '#lib/clipboard.ts';
 	import type { BrowseResult } from '#lib/browse-cache.ts';
+	import { loadColumnWidths, saveColumnWidth, type ColumnWidthsScope } from '#lib/column-widths.ts';
 	import type { Column } from '#lib/protocol/bindings/Column.ts';
 	import type { Filter } from '#lib/protocol/bindings/Filter.ts';
 	import type { Sort } from '#lib/protocol/bindings/Sort.ts';
@@ -31,6 +32,7 @@
 		loading?: boolean;
 		references?: Reference[];
 		outgoing?: Reference[];
+		widthsScope: ColumnWidthsScope;
 		onsort: (sort: Sort | undefined) => void;
 		onprefetch: (reference: Reference, filter: Filter[]) => void;
 		lookup: (reference: Reference, filter: Filter[]) => Promise<BrowseResult>;
@@ -49,6 +51,7 @@
 		loading = false,
 		references = [],
 		outgoing = [],
+		widthsScope,
 		onsort,
 		onprefetch,
 		lookup
@@ -72,7 +75,7 @@
 		onprefetch: (reference, filter) => onprefetch(reference, filter)
 	});
 
-	const widths = new Map<string, number>();
+	const widths = $derived(loadColumnWidths(widthsScope));
 	const referenceWidthKey = (reference: Reference) => `\0${reference.label}`;
 
 	const gridColumns = $derived<IColumnConfig[]>([
@@ -106,6 +109,7 @@
 	let anchor = $state.raw<CellPosition>();
 	let head = $state.raw<CellPosition>();
 	let dragging = false;
+	let resized: string | undefined;
 
 	const init = (grid: IApi) => {
 		api = grid;
@@ -119,11 +123,19 @@
 					? undefined
 					: { row: Number(row), column: Number(column) };
 		});
-		grid.on('resize-column', ({ id, width }) => {
-			if (width === undefined) return;
+		grid.on('resize-column', ({ id, width, inProgress }) => {
 			const index = Number(id) - 1;
 			const reference = references[index - headers.length];
-			widths.set(reference ? referenceWidthKey(reference) : headers[index], width);
+			const key = reference ? referenceWidthKey(reference) : headers[index];
+			const applied = grid.getState().columns.find((column) => column.id === id)?.width;
+			if (inProgress && width !== undefined && applied !== undefined) {
+				widths.set(key, applied);
+				resized = key;
+				return;
+			}
+			const final = resized === key ? widths.get(key) : undefined;
+			resized = undefined;
+			if (final !== undefined) saveColumnWidth(widthsScope, key, final);
 		});
 	};
 

@@ -45,6 +45,7 @@
 		return 0;
 	});
 	const target = $derived(table && { ...table, limit: PAGE_SIZE, offset, sort });
+	const widthsScope = $derived(table && { connectorId, schema: table.schema, table: table.table });
 	$effect(() => connection.select(target));
 	const info = $derived(
 		overview.type === 'loaded' && target
@@ -113,7 +114,7 @@
 			</div>
 		{/if}
 
-		{#if target}
+		{#if target && widthsScope}
 			<div class="flex items-center justify-between gap-4 border-l px-2 py-1">
 				<div class="flex min-w-0 items-center gap-2">
 					<h2 class="min-w-0 shrink-0 truncate font-semibold">
@@ -169,6 +170,7 @@
 						{sort}
 						{references}
 						{outgoing}
+						{widthsScope}
 						onsort={(next) => (sort = next)}
 						onprefetch={(reference, filter) =>
 							connection.prefetch({
