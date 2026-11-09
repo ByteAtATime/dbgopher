@@ -89,13 +89,18 @@ export const listConnectors = (userId: string) =>
 		.where(eq(connector.userId, userId))
 		.orderBy(desc(connector.createdAt));
 
-export const createConnector = async (userId: string, name: string) => {
+export const createConnector = async (
+	userId: string,
+	name: string,
+	environment: (typeof connector.$inferInsert)['environment']
+) => {
 	const enrollmentToken = newToken();
 	const [{ id }] = await db
 		.insert(connector)
 		.values({
 			userId,
 			name,
+			environment,
 			enrollmentTokenHash: hashToken(enrollmentToken),
 			enrollmentExpiresAt: new Date(Date.now() + ENROLLMENT_TTL_MS)
 		})

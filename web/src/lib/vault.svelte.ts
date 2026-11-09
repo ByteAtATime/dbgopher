@@ -152,6 +152,7 @@ const createVaultStore = (userId: string) => {
 		startPairing,
 		completePairing,
 		connector: (connectorId: string) => contents()?.connectors[connectorId],
+		connectors: () => Object.values(contents()?.connectors ?? {}),
 		userKey: () => {
 			const userKey = contents()?.userKey;
 			return userKey === undefined ? undefined : fromHex(userKey);
