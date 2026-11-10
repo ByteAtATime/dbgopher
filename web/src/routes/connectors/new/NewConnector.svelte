@@ -44,19 +44,26 @@
 		{ key: 'CONNECTOR_ID', value: connector.id },
 		{ key: 'PAIRING_CODE', value: connector.pairingCode, secret: true },
 		{ key: 'USER_KEY', value: connector.userKey, secret: true },
-		{ key: 'CONNECTOR_STATE_DIR', value: `$HOME/.local/state/dbgopher/${connector.id}` },
 		{ key: 'DATABASE_URL', value: '<database url>' }
 	];
 
 	const ACTIVE_CARD =
 		'border-primary/25 bg-[radial-gradient(90%_120%_at_0%_0%,var(--primary-soft),transparent_55%)]';
 
-	const RUN = 'cargo run --manifest-path connector/Cargo.toml';
-	const BREAK = ' \\\n';
+	const RUN = 'docker run --rm --network host';
+	const IMAGE = 'ghcr.io/byteatatime/dbgopher';
+	const BREAK = ' \\\n  ';
 	const MASK = '•'.repeat(24);
 
+	const volume = (connector: Created) => `-v dbgopher-${connector.id}:/state`;
+
 	const command = (connector: Created) =>
-		[...commandLines(connector).map(({ key, value }) => `${key}=${value}`), RUN].join(BREAK);
+		[
+			RUN,
+			volume(connector),
+			...commandLines(connector).map(({ key, value }) => `-e ${key}=${value}`),
+			IMAGE
+		].join(BREAK);
 
 	const pairing = $derived(created && createPairing(vault, created.id));
 	$effect(() => pairing?.start());
@@ -258,14 +265,18 @@
 			</div>
 			<div class="rounded-lg border bg-background">
 				<pre class="overflow-x-auto p-4 font-mono text-[13px] leading-6 whitespace-pre"><code
-						>{#each commandLines(created) as { key, value, secret } (key)}<span class="text-info"
-								>{key}</span
-							><span class="text-faint-foreground">=</span>{#if secret && !revealed}<span
-									class="text-card-foreground">{value.slice(0, 6)}</span
+						><span class="text-brand">{RUN}</span><span class="text-faint-foreground">{BREAK}</span
+						><span class="text-card-foreground">{volume(created)}</span><span
+							class="text-faint-foreground">{BREAK}</span
+						>{#each commandLines(created) as { key, value, secret } (key)}<span
+								class="text-faint-foreground"
+								>-e </span><span class="text-info">{key}</span><span class="text-faint-foreground"
+								>=</span
+							>{#if secret && !revealed}<span class="text-card-foreground">{value.slice(0, 6)}</span
 								><span class="tracking-tight text-faint-foreground">{MASK}</span>{:else}<span
 									class={value.startsWith('<') ? 'text-warn' : 'text-card-foreground'}>{value}</span
 								>{/if}<span class="text-faint-foreground">{BREAK}</span>{/each}<span
-							class="text-brand">{RUN}</span
+							class="text-brand">{IMAGE}</span
 						></code
 					></pre>
 			</div>
