@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { db } from './db';
 import { connector } from './db/schema';
 import { hashToken } from './tokens';
+import type { Enrollment } from '../pairing.svelte';
 
 const ENROLLMENT_TTL_MS = 60 * 60_000;
 const KEY_LENGTH = 32;
@@ -11,6 +12,17 @@ const KEY_LENGTH = 32;
 const isUuid = (id: string) => z.uuid().safeParse(id).success;
 
 const newToken = () => randomBytes(32).toString('base64url');
+
+const issueEnrollment = () => {
+	const enrollmentToken = newToken();
+	return {
+		enrollmentToken,
+		columns: {
+			enrollmentTokenHash: hashToken(enrollmentToken),
+			enrollmentExpiresAt: new Date(Date.now() + ENROLLMENT_TTL_MS)
+		}
+	};
+};
 
 export const verifyConnector = async (id: string, token: string) => {
 	if (!isUuid(id)) return false;
@@ -67,6 +79,39 @@ export const getEnrollment = async (userId: string, id: string) => {
 	return row;
 };
 
+export const getConnector = async (userId: string, id: string) => {
+	if (!isUuid(id)) return;
+	const [row] = await db
+		.select({
+			id: connector.id,
+			name: connector.name,
+			environment: connector.environment,
+			identityKey: connector.identityKey,
+			enrollmentExpiresAt: connector.enrollmentExpiresAt
+		})
+		.from(connector)
+		.where(and(eq(connector.id, id), eq(connector.userId, userId)));
+	if (!row) return;
+	const { identityKey, enrollmentExpiresAt, ...rest } = row;
+	const enrollment: Enrollment = identityKey
+		? 'enrolled'
+		: enrollmentExpiresAt && enrollmentExpiresAt > new Date()
+			? 'open'
+			: 'expired';
+	return { ...rest, enrollment };
+};
+
+export const renewEnrollment = async (userId: string, id: string) => {
+	if (!isUuid(id)) return;
+	const { enrollmentToken, columns } = issueEnrollment();
+	const [row] = await db
+		.update(connector)
+		.set(columns)
+		.where(and(eq(connector.id, id), eq(connector.userId, userId), isNull(connector.identityKey)))
+		.returning({ id: connector.id });
+	return row && enrollmentToken;
+};
+
 export const ownsConnector = async (userId: string, id: string) => {
 	if (!isUuid(id)) return false;
 	const [row] = await db
@@ -94,16 +139,10 @@ export const createConnector = async (
 	name: string,
 	environment: (typeof connector.$inferInsert)['environment']
 ) => {
-	const enrollmentToken = newToken();
+	const { enrollmentToken, columns } = issueEnrollment();
 	const [{ id }] = await db
 		.insert(connector)
-		.values({
-			userId,
-			name,
-			environment,
-			enrollmentTokenHash: hashToken(enrollmentToken),
-			enrollmentExpiresAt: new Date(Date.now() + ENROLLMENT_TTL_MS)
-		})
+		.values({ userId, name, environment, ...columns })
 		.returning({ id: connector.id });
 	return { id, enrollmentToken };
 };

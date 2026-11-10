@@ -59,6 +59,17 @@ const putVault = async (
 	return z.object({ revision: z.int() }).parse(await response.json()).revision;
 };
 
+const pairingCredentials = async (
+	userKey: string,
+	enrollmentToken: string,
+	pairingSecret: string
+) => {
+	const { publicKey } = await userKeyFromSeed(fromHex(userKey));
+	return { pairingCode: `${enrollmentToken}.${pairingSecret}`, userKey: toHex(publicKey) };
+};
+
+export type PairingCredentials = Awaited<ReturnType<typeof pairingCredentials>>;
+
 const createVaultStore = (userId: string) => {
 	let state = $state.raw<VaultState>({ type: 'loading' });
 	let loading: Promise<void> | undefined;
@@ -124,14 +135,16 @@ const createVaultStore = (userId: string) => {
 		throw unexpected(409);
 	};
 
-	const startPairing = async (connectorId: string) => {
+	const startPairing = async (connectorId: string, enrollmentToken: string) => {
 		const pairingSecret = generateKey();
 		const { userKey } = await write((contents) => ({
 			...contents,
-			connectors: { ...contents.connectors, [connectorId]: { state: 'pairing', pairingSecret } }
+			connectors: {
+				...contents.connectors,
+				[connectorId]: { state: 'pairing', pairingSecret, enrollmentToken }
+			}
 		}));
-		const { publicKey } = await userKeyFromSeed(fromHex(userKey));
-		return { pairingSecret, userKey: toHex(publicKey) };
+		return pairingCredentials(userKey, enrollmentToken, pairingSecret);
 	};
 
 	const completePairing = (connectorId: string, identityKey: string) =>
@@ -150,6 +163,12 @@ const createVaultStore = (userId: string) => {
 		setup,
 		unlock,
 		startPairing,
+		storedPairingCredentials: (connectorId: string) => {
+			const current = contents();
+			const entry = current?.connectors[connectorId];
+			if (!current || entry?.state !== 'pairing' || !entry.enrollmentToken) return undefined;
+			return pairingCredentials(current.userKey, entry.enrollmentToken, entry.pairingSecret);
+		},
 		completePairing,
 		connector: (connectorId: string) => contents()?.connectors[connectorId],
 		connectors: () => Object.values(contents()?.connectors ?? {}),

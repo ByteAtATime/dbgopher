@@ -24,7 +24,11 @@ const decoder = new TextDecoder();
 const keySchema = z.string().regex(/^[0-9a-f]{64}$/);
 
 const vaultConnectorSchema = z.discriminatedUnion('state', [
-	z.object({ state: z.literal('pairing'), pairingSecret: keySchema }),
+	z.object({
+		state: z.literal('pairing'),
+		pairingSecret: keySchema,
+		enrollmentToken: z.string().optional()
+	}),
 	z.object({ state: z.literal('paired'), identityKey: keySchema })
 ]);
 

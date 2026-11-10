@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { enhance } from '$app/forms';
+	import { onMount } from 'svelte';
+	import { enhance, type SubmitFunction } from '$app/forms';
+	import { replaceState } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import confetti from 'canvas-confetti';
@@ -16,22 +18,28 @@
 	import { Label } from '#lib/components/ui/label/index.ts';
 	import * as Tooltip from '#lib/components/ui/tooltip/index.ts';
 	import { environments, type Environment } from '#lib/environments.ts';
-	import { createPairing } from '#lib/pairing.svelte.ts';
-	import type { VaultStore } from '#lib/vault.svelte.ts';
-	import type { SubmitFunction } from './$types';
+	import { createPairing, resumePairing, type Enrollment } from '#lib/pairing.svelte.ts';
+	import type { PairingCredentials, VaultStore } from '#lib/vault.svelte.ts';
 
-	type Created = { id: string; name: string; pairingCode: string; userKey: string };
+	type Connector = { id: string; name: string; environment: Environment };
+	type Credentials = PairingCredentials & { id: string };
+	type Setup = { connector: Connector; credentials?: Credentials };
 
-	let { vault }: { vault: VaultStore } = $props();
+	type Props = { vault: VaultStore; resume?: Connector & { enrollment: Enrollment } };
+
+	let { vault, resume }: Props = $props();
 
 	let name = $state('');
 	let environment = $state<Environment>('production');
-	let created = $state<Created>();
+	let setup = $state<Setup>();
 	let submitting = $state(false);
 	let failure = $state<string>();
 	let copied = $state(false);
 	let revealed = $state(false);
 	let celebrate = $state(false);
+
+	const connector = $derived(setup?.connector ?? resume);
+	const credentials = $derived(setup?.credentials);
 
 	const relayUrl = $derived(
 		`${page.url.protocol === 'https:' ? 'wss:' : 'ws:'}//${page.url.host}/connector`
@@ -39,11 +47,11 @@
 
 	type CommandLine = { key: string; value: string; secret?: boolean };
 
-	const commandLines = (connector: Created): CommandLine[] => [
+	const commandLines = (credentials: Credentials): CommandLine[] => [
 		{ key: 'RELAY_URL', value: relayUrl },
-		{ key: 'CONNECTOR_ID', value: connector.id },
-		{ key: 'PAIRING_CODE', value: connector.pairingCode, secret: true },
-		{ key: 'USER_KEY', value: connector.userKey, secret: true },
+		{ key: 'CONNECTOR_ID', value: credentials.id },
+		{ key: 'PAIRING_CODE', value: credentials.pairingCode, secret: true },
+		{ key: 'USER_KEY', value: credentials.userKey, secret: true },
 		{ key: 'DATABASE_URL', value: '<database url>' }
 	];
 
@@ -55,17 +63,17 @@
 	const BREAK = ' \\\n  ';
 	const MASK = '•'.repeat(24);
 
-	const volume = (connector: Created) => `-v dbgopher-${connector.id}:/state`;
+	const volume = (credentials: Credentials) => `-v dbgopher-${credentials.id}:/state`;
 
-	const command = (connector: Created) =>
+	const command = (credentials: Credentials) =>
 		[
 			RUN,
-			volume(connector),
-			...commandLines(connector).map(({ key, value }) => `-e ${key}=${value}`),
+			volume(credentials),
+			...commandLines(credentials).map(({ key, value }) => `-e ${key}=${value}`),
 			IMAGE
 		].join(BREAK);
 
-	const pairing = $derived(created && createPairing(vault, created.id));
+	const pairing = $derived(setup && createPairing(vault, setup.connector.id));
 	$effect(() => pairing?.start());
 
 	$effect(() => {
@@ -97,23 +105,30 @@
 		);
 	});
 
-	const create: SubmitFunction = () => {
+	const begin = async (connector: Connector, pending: Promise<PairingCredentials | undefined>) => {
+		celebrate = vault.connectors().every((entry) => entry.state !== 'paired');
+		try {
+			const credentials = await pending;
+			setup = { connector, credentials: credentials && { id: connector.id, ...credentials } };
+		} catch (error) {
+			failure = error instanceof Error ? error.message : String(error);
+		}
+	};
+
+	onMount(() => {
+		if (resume) void begin(resume, resumePairing(vault, resume.id, resume.enrollment));
+	});
+
+	const create: SubmitFunction<{ id: string; enrollmentToken: string }> = () => {
 		submitting = true;
 		failure = undefined;
-		const first = vault.connectors().every((entry) => entry.state !== 'paired');
 		return async ({ result }) => {
-			try {
-				if (result.type === 'success' && result.data) {
-					const { id, enrollmentToken } = result.data;
-					const { pairingSecret, userKey } = await vault.startPairing(id);
-					created = { id, name, pairingCode: `${enrollmentToken}.${pairingSecret}`, userKey };
-					celebrate = first;
-				}
-			} catch (error) {
-				failure = error instanceof Error ? error.message : String(error);
-			} finally {
-				submitting = false;
+			if (result.type === 'success' && result.data) {
+				const { id, enrollmentToken } = result.data;
+				replaceState(resolve('/c/[id]', { id }), {});
+				await begin({ id, name, environment }, vault.startPairing(id, enrollmentToken));
 			}
+			submitting = false;
 		};
 	};
 
@@ -163,27 +178,27 @@
 	<form
 		method="POST"
 		use:enhance={create}
-		class="rounded-xl border bg-card p-6 transition-colors {created ? '' : ACTIVE_CARD}"
+		class="rounded-xl border bg-card p-6 transition-colors {connector ? '' : ACTIVE_CARD}"
 	>
 		<div class="flex items-center gap-3">
-			{@render step(1, created !== undefined)}
+			{@render step(1, connector !== undefined)}
 			<h2 class="font-semibold text-card-foreground">Name it</h2>
-			{#if created}
+			{#if connector}
 				<div in:fly={{ x: 8, duration: 300 }} class="ml-auto flex min-w-0 items-center gap-2">
-					<span class="truncate text-sm font-medium text-card-foreground">{created.name}</span>
+					<span class="truncate text-sm font-medium text-card-foreground">{connector.name}</span>
 					<span
 						class="flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium {environments[
-							environment
+							connector.environment
 						].badge}"
 					>
-						{environments[environment].label}
+						{environments[connector.environment].label}
 					</span>
 				</div>
 			{/if}
 		</div>
-		{#if !created}
+		{#if !connector}
 			<div out:slide={{ duration: 250 }} class="space-y-5 pt-5">
-				<fieldset disabled={created !== undefined || submitting} class="grid gap-5 sm:grid-cols-2">
+				<fieldset disabled={submitting} class="grid gap-5 sm:grid-cols-2">
 					<div class="space-y-2">
 						<Label for="connector-name">Name</Label>
 						<Input
@@ -234,15 +249,19 @@
 		{/if}
 	</form>
 
-	{#if created && pairing}
+	{#if failure && connector}
+		<p class="text-sm text-destructive">{failure}</p>
+	{/if}
+
+	{#if credentials}
 		<section
 			in:fly={{ y: 16, duration: 350 }}
-			class="space-y-4 rounded-xl border bg-card p-6 transition-colors {pairing.status === 'paired'
+			class="space-y-4 rounded-xl border bg-card p-6 transition-colors {pairing?.status === 'paired'
 				? ''
 				: ACTIVE_CARD}"
 		>
 			<div class="flex items-center gap-3">
-				{@render step(2, pairing.status === 'paired')}
+				{@render step(2, pairing?.status === 'paired')}
 				<h2 class="font-semibold text-card-foreground">Run the connector on the database host</h2>
 				<Button
 					variant="ghost"
@@ -257,7 +276,7 @@
 				<Button
 					variant={copied ? 'default' : 'secondary'}
 					size="sm"
-					onclick={() => created && copy(command(created))}
+					onclick={() => copy(command(credentials))}
 				>
 					{#if copied}<Check />{:else}<Copy />{/if}
 					Copy
@@ -266,9 +285,9 @@
 			<div class="rounded-lg border bg-background">
 				<pre class="overflow-x-auto p-4 font-mono text-[13px] leading-6 whitespace-pre"><code
 						><span class="text-brand">{RUN}</span><span class="text-faint-foreground">{BREAK}</span
-						><span class="text-card-foreground">{volume(created)}</span><span
+						><span class="text-card-foreground">{volume(credentials)}</span><span
 							class="text-faint-foreground">{BREAK}</span
-						>{#each commandLines(created) as { key, value, secret } (key)}<span
+						>{#each commandLines(credentials) as { key, value, secret } (key)}<span
 								class="text-faint-foreground"
 								>-e </span><span class="text-info">{key}</span><span class="text-faint-foreground"
 								>=</span
@@ -281,7 +300,9 @@
 					></pre>
 			</div>
 		</section>
+	{/if}
 
+	{#if setup && pairing}
 		<section
 			in:fly={{ y: 16, duration: 350, delay: 120 }}
 			{@attach glow}
@@ -321,13 +342,15 @@
 							<Check class="size-4" strokeWidth={3} />
 						</span>
 						<div class="flex min-w-0 flex-1 items-center gap-2">
-							<span class="truncate font-semibold text-card-foreground">{created.name}</span>
+							<span class="truncate font-semibold text-card-foreground">{setup.connector.name}</span
+							>
 							<span
-								class="rounded-md px-2 py-0.5 text-xs font-medium {environments[environment].badge}"
-								>{environments[environment].label}</span
+								class="rounded-md px-2 py-0.5 text-xs font-medium {environments[
+									setup.connector.environment
+								].badge}">{environments[setup.connector.environment].label}</span
 							>
 						</div>
-						<Button href={resolve('/c/[id]', { id: created.id })}>
+						<Button href={resolve('/c/[id]', { id: setup.connector.id })}>
 							Go to connector <ArrowRight />
 						</Button>
 					</div>
@@ -356,7 +379,7 @@
 							</Tooltip.Root>
 						</Tooltip.Provider>
 						<p class="font-semibold text-card-foreground">
-							Waiting for {created.name} to dial in<span class="inline-flex w-4"
+							Waiting for {setup.connector.name} to dial in<span class="inline-flex w-4"
 								><span class="animate-pulse">…</span></span
 							>
 						</p>

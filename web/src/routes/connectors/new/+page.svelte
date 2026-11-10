@@ -1,5 +1,5 @@
 <script lang="ts">
-	import NewConnector from './NewConnector.svelte';
+	import NewConnector from '#lib/components/NewConnector.svelte';
 	import VaultGate from '#lib/components/VaultGate.svelte';
 	import type { PageProps } from './$types';
 

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { parseKey } from './keys';
 import { verifyPairingProof } from './protocol/channel';
+import { RelayError } from './protocol/client';
 import type { VaultStore } from './vault.svelte';
 
 const POLL_INTERVAL_MS = 2_000;
@@ -12,8 +13,13 @@ const enrollmentSchema = z.discriminatedUnion('enrolled', [
 
 export type PairingStatus = 'waiting' | 'paired' | 'failed';
 
+export type Enrollment = 'open' | 'expired' | 'enrolled';
+
+const enrollmentUrl = (connectorId: string) =>
+	`/v1/connectors/${encodeURIComponent(connectorId)}/enrollment`;
+
 const fetchEnrollment = async (connectorId: string) => {
-	const response = await fetch(`/v1/connectors/${encodeURIComponent(connectorId)}/enrollment`);
+	const response = await fetch(enrollmentUrl(connectorId));
 	if (!response.ok) return undefined;
 	return enrollmentSchema.parse(await response.json());
 };
@@ -38,6 +44,24 @@ export const confirmPairing = async (
 		return 'failed';
 	await vault.completePairing(connectorId, enrollment.identityKey);
 	return 'paired';
+};
+
+export const resumePairing = async (
+	vault: VaultStore,
+	connectorId: string,
+	enrollment: Enrollment
+) => {
+	const stored =
+		enrollment === 'expired' ? undefined : await vault.storedPairingCredentials(connectorId);
+	if (stored || enrollment === 'enrolled') return stored;
+	const response = await fetch(enrollmentUrl(connectorId), { method: 'POST' });
+	if (!response.ok) {
+		throw new RelayError('unexpected', `The relay responded with status ${response.status}.`);
+	}
+	const { enrollmentToken } = z
+		.object({ enrollmentToken: z.string() })
+		.parse(await response.json());
+	return vault.startPairing(connectorId, enrollmentToken);
 };
 
 export const createPairing = (vault: VaultStore, connectorId: string) => {
