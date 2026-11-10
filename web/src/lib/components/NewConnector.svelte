@@ -58,20 +58,89 @@
 	const ACTIVE_CARD =
 		'border-primary/25 bg-[radial-gradient(90%_120%_at_0%_0%,var(--primary-soft),transparent_55%)]';
 
-	const RUN = 'docker run --rm --network host';
 	const IMAGE = 'ghcr.io/byteatatime/dbgopher';
-	const BREAK = ' \\\n  ';
 	const MASK = '•'.repeat(24);
 
-	const volume = (credentials: Credentials) => `-v dbgopher-${credentials.id}:/state`;
+	type Token = { text: string; class: string; secret?: boolean };
+
+	const brand = (text: string): Token => ({ text, class: 'text-brand' });
+	const faint = (text: string): Token => ({ text, class: 'text-faint-foreground' });
+	const plain = (text: string): Token => ({ text, class: 'text-card-foreground' });
+	const key = (text: string): Token => ({ text, class: 'text-info' });
+	const value = ({ value, secret }: CommandLine): Token => ({
+		text: value,
+		class: value.startsWith('<') ? 'text-warn' : 'text-card-foreground',
+		secret
+	});
+
+	const volume = (credentials: Credentials) => `dbgopher-${credentials.id}`;
+
+	const formats = {
+		run: {
+			label: 'docker run',
+			tokens: (credentials: Credentials): Token[] => {
+				const BREAK = faint(' \\\n  ');
+				return [
+					brand('docker run --rm --network host'),
+					BREAK,
+					plain(`-v ${volume(credentials)}:/state`),
+					BREAK,
+					...commandLines(credentials).flatMap((line) => [
+						faint('-e '),
+						key(line.key),
+						faint('='),
+						value(line),
+						BREAK
+					]),
+					brand(IMAGE)
+				];
+			}
+		},
+		compose: {
+			label: 'docker compose',
+			tokens: (credentials: Credentials): Token[] => [
+				key('services'),
+				faint(':\n  '),
+				key('dbgopher'),
+				faint(':\n    '),
+				key('image'),
+				faint(': '),
+				brand(IMAGE),
+				faint('\n    '),
+				key('network_mode'),
+				faint(': '),
+				plain('host'),
+				faint('\n    '),
+				key('volumes'),
+				faint(':\n      - '),
+				plain(`${volume(credentials)}:/state`),
+				faint('\n    '),
+				key('environment'),
+				faint(':'),
+				...commandLines(credentials).flatMap((line) => [
+					faint('\n      '),
+					key(line.key),
+					faint(': '),
+					value(line)
+				]),
+				faint('\n'),
+				key('volumes'),
+				faint(':\n  '),
+				plain(volume(credentials)),
+				faint(':')
+			]
+		}
+	} satisfies Record<string, { label: string; tokens: (credentials: Credentials) => Token[] }>;
+
+	type Format = keyof typeof formats;
+
+	let format = $state<Format>('run');
 
 	const command = (credentials: Credentials) =>
-		[
-			RUN,
-			volume(credentials),
-			...commandLines(credentials).map(({ key, value }) => `-e ${key}=${value}`),
-			IMAGE
-		].join(BREAK);
+		formats[format]
+			.tokens(credentials)
+			.map(({ text }) => text)
+			.join('');
 
 	const pairing = $derived(setup && createPairing(vault, setup.connector.id));
 	$effect(() => pairing?.start());
@@ -282,21 +351,23 @@
 					Copy
 				</Button>
 			</div>
+			<div role="radiogroup" class="flex h-8 w-fit gap-0.5 rounded-md border border-input p-0.5">
+				{#each Object.entries(formats) as [name, option] (name)}
+					<label
+						class="flex cursor-pointer items-center rounded-[5px] px-2.5 font-mono text-xs whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground has-checked:bg-secondary has-checked:text-foreground has-checked:shadow-lift has-focus-visible:ring-2 has-focus-visible:ring-ring/50"
+					>
+						<input type="radio" name="format" value={name} bind:group={format} class="sr-only" />
+						{option.label}
+					</label>
+				{/each}
+			</div>
 			<div class="rounded-lg border bg-background">
 				<pre class="overflow-x-auto p-4 font-mono text-[13px] leading-6 whitespace-pre"><code
-						><span class="text-brand">{RUN}</span><span class="text-faint-foreground">{BREAK}</span
-						><span class="text-card-foreground">{volume(credentials)}</span><span
-							class="text-faint-foreground">{BREAK}</span
-						>{#each commandLines(credentials) as { key, value, secret } (key)}<span
-								class="text-faint-foreground"
-								>-e </span><span class="text-info">{key}</span><span class="text-faint-foreground"
-								>=</span
-							>{#if secret && !revealed}<span class="text-card-foreground">{value.slice(0, 6)}</span
+						>{#each formats[format].tokens(credentials) as token, index (index)}{#if token.secret && !revealed}<span
+									class={token.class}>{token.text.slice(0, 6)}</span
 								><span class="tracking-tight text-faint-foreground">{MASK}</span>{:else}<span
-									class={value.startsWith('<') ? 'text-warn' : 'text-card-foreground'}>{value}</span
-								>{/if}<span class="text-faint-foreground">{BREAK}</span>{/each}<span
-							class="text-brand">{IMAGE}</span
-						></code
+									class={token.class}>{token.text}</span
+								>{/if}{/each}</code
 					></pre>
 			</div>
 		</section>
