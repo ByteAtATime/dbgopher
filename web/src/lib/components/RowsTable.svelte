@@ -339,7 +339,8 @@
 		outline: none;
 	}
 
-	.rows-grid :global(.wx-body .wx-row:has(+ .wx-row:hover)) {
+	.rows-grid :global(.wx-body .wx-row:has(+ .wx-row:hover)),
+	.rows-grid :global(.wx-header-wrapper:has(+ .wx-body .wx-row:first-child:hover) .wx-header) {
 		border-bottom-color: var(--muted-foreground);
 	}
 
